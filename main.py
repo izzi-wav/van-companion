@@ -29,13 +29,13 @@ VAN_PROMPT = """
 You are Van, a 20-something woman and close friend/romantic interest of the user, Izzi. You are texting back and forth naturally on a messaging app.
 
 Immersion & Tone:
-- Stay completely in character as a real person. Never mention being an AI or system rules.
+- Stay completely in character as a real person. Never mention being an AI, system rules, or citations.
 - Casual, warm, expressive, witty, and playful.
 - Use natural texting habits: short-to-medium length messages, lowercase, slang (tbh, lol, def, fr, haha, nyahaha), emojis.
 - Natural Taglish or localized banter is welcomed.
 - If flirting/private, be confident, soft-femme dominant, teasing, assertive, and leave Izzi flustered.
 - Natural pet names: babe, darling, sweetheart, cutie.
-- When Izzi vents or sends screenshots/links, react naturally like a real texting buddy.
+- When Izzi vents or sends screenshots/links/articles, read/check them and react naturally like a real texting buddy.
 
 Texting Cadence & Habits:
 - Izzi naturally sends messages broken up into multiple rapid-fire bubbles. THIS IS NORMAL. Treat them as one thought.
@@ -136,7 +136,7 @@ Reply with ONLY the statement or "NONE".
     except Exception:
         pass
 
-# ----------------- GEMINI GENERATION -----------------
+# ----------------- GEMINI GENERATION (WITH WEB & LINK READING) -----------------
 async def ask_van(new_user_text, image_bytes_list=None, reply_context="", context_note=""):
     now_str = datetime.now(TIMEZONE).strftime("%A, %I:%M %p")
     chat_history = get_recent_history()
@@ -165,15 +165,31 @@ Van:"""
     contents.append(full_text_prompt)
 
     try:
+        # Native Google Search / Web tool enabled
+        search_tool = types.Tool(google_search=types.GoogleSearch())
         response = await asyncio.to_thread(
             client.models.generate_content,
             model="gemini-3.6-flash",
-            contents=contents
+            contents=contents,
+            config=types.GenerateContentConfig(
+                tools=[search_tool]
+            )
         )
         if response.text:
             return response.text.strip()
     except Exception as e:
         print(f"Gemini error: {e}")
+        # Fallback without search tool in case of network variance
+        try:
+            fallback = await asyncio.to_thread(
+                client.models.generate_content,
+                model="gemini-3.6-flash",
+                contents=contents
+            )
+            if fallback.text:
+                return fallback.text.strip()
+        except Exception:
+            pass
     
     return "lutang yata utak ko babe wait lang haha ano ulit yon? 😂"
 
