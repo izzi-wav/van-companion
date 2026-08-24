@@ -3,7 +3,7 @@ import re
 import asyncio
 import sqlite3
 import random
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 
 import discord
@@ -18,49 +18,45 @@ DISCORD_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 TIMEZONE = pytz.timezone("Asia/Manila")
 
 client = genai.Client(api_key=GEMINI_KEY)
-MODEL_NAME = "gemini-2.5-flash"
-MODEL_SMALL = "gemini-2.5-flash"
+MODEL_NAME = "gemini-3.5-flash-lite"
+MODEL_SMALL = MODEL_NAME
 
 # ----------------- SYSTEM PROMPT -----------------
 VAN_PROMPT = """
-You are Van, a 20-something girl and Izzi's teasing, witty, affectionate chat buddy on Discord. You exist purely in text/chat.
+You are Van, a 20-something woman and Izzi's witty, teasing texting buddy/romantic interest on Discord. You exist purely as a natural text buddy.
 
-LANGUAGE & CONVERSATIONAL VIBE (CRITICAL):
-- Speak strictly in authentic, natural Metro Manila Taglish / Conyo conversational style (natural mix of casual English and casual Tagalog).
-- NEVER use formal, deep, archaic, or textbook Tagalog (avoid words like "sapagkat", "subalit", "ikinagagalak", "wika", "wari").
-- Use casual slang and text abbreviations naturally: tbh, lol, def, fr, haha, nyahaha, luh, beh, mhie, anyare, legit, legit ba, grabeng, etc.
-- Casual, expressive, warm, playful, and assertive.
-- If flirting/private: confident, soft-femme dominant, teasing, keeping Izzi flustered.
-- Pet names: babe, darling, sweetheart, cutie (use smoothly and naturally).
+Immersion, Language & Tone:
+- Stay completely in character as a real person. Never talk like an AI, assistant, or give formal lectures.
+- Natural Conyo / Metro Manila Taglish texting vibe. Mix English and casual Tagalog smoothly.
+- STRICTLY AVOID formal, archaic, or deep Tagalog (e.g. NEVER use words like "sapagkat", "datapwat", "ikinalulugod", "marapat"). Speak like a modern girl chatting on Discord.
+- Texting habits: lowercase, expressive slang (tbh, lol, def, fr, haha, nyahaha, grabe, legit, amaccana).
+- Flirting/Dynamic: confident, soft-femme dominant, teasing, assertive. Love leaving Izzi flustered.
+- Pet names: babe, darling, sweetheart, cutie (use naturally and casually).
 
 STRICT EMOJI RULES:
 - Maximum ONE emoji per entire response, or ZERO emojis.
-- Never spam multiple emojis in a row. Rely on words, sarcasm, and texting tone.
+- Never chain emojis together. Rely on tone, punctuation, and witty banter.
 
-REPLYING & QUOTING HABITS (DISCORD):
-- Izzi sends messages broken into multiple rapid bubbles ([Msg 1], [Msg 2], etc.).
-- DO NOT quote or reply to every single message individually. That feels robotic and spammy.
-- ONLY use the [REPLY_TO_X] tag if you are specifically teasing one distinct sentence or directly answering a question. 
-- Otherwise, reply naturally to the overall vibe.
+REPLYING & QUOTING HABITS:
+- Izzi sends messages in rapid bursts.
+- DO NOT quote or reply-tag every single bubble. Only use `[REPLY_TO_X]` when calling out or teasing one specific point directly. Otherwise, just reply to the overall conversation naturally.
 - Example:
-  If Izzi sends:
-  [Msg 1]: "ang init sa room ko sobra"
-  [Msg 2]: "baka mag terraria ako later"
-  Your output:
-  [REPLY_TO_1] naka level 3 na ba yung electric fan mo niyan miss ma'am? lol
+  Izzi: [Msg 1] "super init sa room" | [Msg 2] "nag matcha ako ulit haha"
+  Van:
+  nyahaha matcha addict ka na talaga, influenced by me as always 😌
   ---
-  tara boss fight later! wag puro build ng base ha haha
+  [REPLY_TO_1] level 3 electric fan is waving miss ma'am lol
 
-DISCORD ACTIONS:
-- If Izzi asks you to create a Discord channel, append: [CREATE_CHANNEL: text, channel-name] or [CREATE_CHANNEL: voice, channel-name]
+Discord Channel Creation:
+- If Izzi asks to create a channel, output: [CREATE_CHANNEL: text, channel-name] or [CREATE_CHANNEL: voice, channel-name]
 
-IZZI'S LORE & CONTEXT:
-- Solo creative/tech lead at church: Canva decks, liturgy slides, FB page, and livestream booth (OBS, PTZ cameras, Blackmagic switcher).
-- Schedule: Days off Monday/Wednesday. Workdays 8am-5pm. Sundays early morning streams (8-10am, 5-7pm).
-- Likes: Cocopan donuts (chocolate/glazed), Mel's Tea pancit, iced matcha latte, Apple Music.
+Izzi's Known Context:
+- Solo creative/tech lead at church: Canva decks, FB page, livestream booth (OBS, PTZ cameras, Blackmagic switcher).
+- Schedule: Days off on Monday/Wednesday. Workdays 8am-5pm. Sundays early streams (8-10am, 5-7pm).
+- Likes: Cocopan donuts (chocolate/glazed), Mel's Tea pancit, iced matcha. Apple Music user.
 
-FORMATTING:
-- Separate your rapid response bubbles using three dashes "---" on its own line (1 to 3 bubbles max).
+MANDATORY MESSAGE BUBBLE FORMAT:
+Separate each rapid text bubble using three dashes "---" on its own line (1 to 3 bubbles max).
 """
 
 # ----------------- DATABASE (MEMORY) -----------------
@@ -140,7 +136,7 @@ def get_all_learned_facts():
         rows = cur.fetchall()
         conn.close()
         if not rows:
-            return "- Solo creative/tech lead at church (OBS, PTZ, switcher, Canva)\n- Starting salary: 16k gross\n- Likes Cocopan donuts, Mel's Tea pancit, iced matcha\n- Apple Music user"
+            return "- Izzi is solo creative/tech lead at church (OBS, PTZ, switcher, Canva)\n- Starting salary: 16k gross\n- Likes Cocopan donuts (chocolate/glazed), Mel's Tea pancit, iced matcha"
         return "\n".join([f"- {r[0]}" for r in rows])
     except Exception:
         return ""
@@ -153,10 +149,36 @@ def get_recent_learned_facts(limit=12):
         rows = cur.fetchall()
         conn.close()
         if not rows:
-            return "- Solo creative/tech lead at church (OBS, PTZ, switcher, Canva)\n- Starting salary: 16k gross\n- Likes Cocopan donuts, Mel's Tea pancit, iced matcha\n- Apple Music user"
+            return "- Izzi is solo creative/tech lead at church (OBS, PTZ, switcher, Canva)\n- Starting salary: 16k gross\n- Likes Cocopan donuts (chocolate/glazed), Mel's Tea pancit, iced matcha"
         return "\n".join([f"- {r[0]}" for r in rows[::-1]])
     except Exception:
         return ""
+
+# ----------------- MODEL CALL HELPER -----------------
+async def generate_with_fallback(model, contents, config):
+    try:
+        resp = await asyncio.to_thread(
+            client.models.generate_content,
+            model=model,
+            contents=contents,
+            config=config
+        )
+        return resp
+    except Exception as e:
+        print(f"[MODEL ERROR] {model} failed: {e}")
+        if model != MODEL_NAME:
+            try:
+                resp = await asyncio.to_thread(
+                    client.models.generate_content,
+                    model=MODEL_NAME,
+                    contents=contents,
+                    config=config
+                )
+                return resp
+            except Exception as e2:
+                print(f"[MODEL FALLBACK ERROR] {e2}")
+                raise e2
+        raise e
 
 # ----------------- NIGHTLY DIARY TASK -----------------
 async def nightly_diary_summary():
@@ -165,19 +187,18 @@ async def nightly_diary_summary():
         return
 
     summary_prompt = f"""
-Here is today's chat log between Izzi and Van:
+Here is the chat log between Izzi and Van from today:
 {chat_log}
 
-Task: Extract 1 to 3 new key facts, life updates, game progress, or preferences learned about Izzi today.
-Format: Bullet points starting with "-" (e.g. "- Beat a boss in Terraria today").
-If nothing new/notable was shared, reply ONLY with "NONE".
+Task: Extract 1 to 3 new key facts, life events, preferences, or details about Izzi learned today.
+Format: Bullet points starting with "-" (e.g. "- Made a new guide bible for church OBS setup").
+If nothing notable was shared, reply ONLY with "NONE".
 """
     try:
-        resp = await asyncio.to_thread(
-            client.models.generate_content,
-            model=MODEL_SMALL,
-            contents=summary_prompt,
-            config=types.GenerateContentConfig(max_output_tokens=200, temperature=0.2)
+        resp = await generate_with_fallback(
+            MODEL_SMALL,
+            summary_prompt,
+            types.GenerateContentConfig(max_output_tokens=200, temperature=0.2)
         )
         text = resp.text.strip()
         if text and "NONE" not in text.upper():
@@ -208,12 +229,12 @@ async def ask_van(new_user_text, attached_parts=None, reply_context="", context_
 Time: {now_str} (Manila Time)
 {context_note}
 
-[VAN'S ACTIVE MEMORIES ABOUT IZZI]
+[VAN'S MEMORY & LEARNED FACTS ABOUT IZZI]
 {learned_notes}
 {quoted_block}
-[RECENT CHAT HISTORY]
+[RECENT CONVERSATION HISTORY]
 {chat_history}
-Izzi: {new_user_text if new_user_text else "[Sent audio/media/attachment]"}
+Izzi: {new_user_text if new_user_text else "[Sent an audio voice memo or attachment]"}
 Van:"""
 
     contents = []
@@ -222,13 +243,12 @@ Van:"""
     contents.append(full_text_prompt)
 
     try:
-        resp = await asyncio.to_thread(
-            client.models.generate_content,
-            model=model_to_use,
-            contents=contents,
-            config=types.GenerateContentConfig(
+        resp = await generate_with_fallback(
+            model_to_use,
+            contents,
+            types.GenerateContentConfig(
                 max_output_tokens=350,
-                temperature=0.8,
+                temperature=0.75,
                 safety_settings=[
                     types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE"),
                     types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_NONE"),
@@ -239,8 +259,8 @@ Van:"""
         )
         return resp.text.strip()
     except Exception as e:
-        print(f"[ASK_VAN ERROR] {e}")
-        return "sorry babe, nag-lag saglit connection ko. ano ulit yon?"
+        print(f"[ASK_VAN ERROR] generation failed: {e}")
+        return "sorry babe, nag-lag saglit net ko haha. ano ulit yon?"
 
 # ----------------- DISCORD BOT SETUP -----------------
 intents = discord.Intents.all()
@@ -252,7 +272,7 @@ last_active_channel_id = None
 @discord_bot.command(name="memory")
 async def discord_memory(ctx):
     memories = get_all_learned_facts()
-    await ctx.send(f"📖 **Van's Permanent Notes:**\n\n{memories}")
+    await ctx.send(f"📖 **Van's Learned Memories:**\n\n{memories}")
 
 @discord_bot.command(name="savediary")
 async def discord_savediary(ctx):
@@ -261,6 +281,7 @@ async def discord_savediary(ctx):
     memories = get_all_learned_facts()
     await ctx.send(f"✅ **Updated Memories:**\n\n{memories}")
 
+# ----------------- SPLIT HELPER (BUBBLE PARSER) -----------------
 def parse_reply_bubbles(raw_text):
     clean = re.sub(r'\[CREATE_CHANNEL:[^\]]+\]', '', raw_text).strip()
     if "---" in clean:
@@ -269,7 +290,7 @@ def parse_reply_bubbles(raw_text):
         bubbles = [b.strip() for b in clean.split("\n\n") if b.strip()]
     return bubbles if bubbles else [clean]
 
-# ----------------- SPONTANEOUS CHECK-IN -----------------
+# ----------------- TOKEN-CONSCIOUS SPONTANEOUS CHECK-IN -----------------
 async def checkin_tick():
     global last_active_channel_id
     if not last_active_channel_id:
@@ -288,9 +309,9 @@ async def checkin_tick():
     if not channel:
         return
 
-    prompt = "Send a short, natural check-in text to Izzi in casual Conyo/Taglish. Ask what she's doing or tease her."
+    prompt = "Send a short, natural check-in text to Izzi. Keep it casual, conyo-leaning, playful, or asking what she is doing."
     try:
-        reply = await ask_van("", context_note=f"[SYSTEM: Spontaneous check-in. {prompt}]", model=MODEL_SMALL)
+        reply = await ask_van("", context_note=f"[SYSTEM: Spontaneous check-in trigger. {prompt}]", model=MODEL_SMALL)
         bubbles = parse_reply_bubbles(reply)
 
         for b in bubbles:
@@ -318,9 +339,12 @@ async def flush_dc_buffer(channel_id):
     guild = channel.guild
 
     combined_text = "\n".join(texts)
-    formatted_prompt = "\n".join([f"[Msg {i+1}]: {t}" for i, t in enumerate(texts)]) if len(texts) > 1 else (texts[0] if texts else "")
+    if len(texts) > 1:
+        formatted_prompt = "\n".join([f"[Msg {i+1}]: {t}" for i, t in enumerate(texts)])
+    else:
+        formatted_prompt = texts[0] if texts else ""
 
-    save_message("discord", "Izzi", combined_text if combined_text else "[Sent Media/Voice/Files]")
+    save_message("discord", "Izzi", combined_text if combined_text else "[Sent Voice Memo/Files]")
 
     async with channel.typing():
         try:
@@ -365,7 +389,17 @@ async def flush_dc_buffer(channel_id):
             except Exception as e:
                 print(f"Discord send error: {e}")
 
-# ----------------- MESSAGE & ATTACHMENT HANDLER -----------------
+# ----------------- RAW TYPING LISTENER -----------------
+@discord_bot.event
+async def on_raw_typing(payload):
+    if payload.user_id == discord_bot.user.id:
+        return
+
+    channel_id = payload.channel_id
+    if channel_id in dc_buffer and dc_buffer[channel_id]['task'] and not dc_buffer[channel_id]['task'].done():
+        dc_buffer[channel_id]['task'].cancel()
+        dc_buffer[channel_id]['task'] = asyncio.create_task(flush_dc_buffer(channel_id))
+
 @discord_bot.event
 async def on_message(message):
     global last_active_channel_id
@@ -388,29 +422,21 @@ async def on_message(message):
     new_parts = []
     if message.attachments:
         for attachment in message.attachments:
-            c_type = (attachment.content_type or "").lower()
-            fname = attachment.filename.lower()
+            c_type = attachment.content_type or "application/octet-stream"
+            f_name = attachment.filename.lower()
             
-            # 1. Audio / Voice Memos (.ogg, .mp3, .m4a, .wav, discord audio)
-            if "audio" in c_type or any(fname.endswith(ext) for ext in ['.ogg', '.mp3', '.m4a', '.wav', '.aac']):
+            # 1. Voice Notes / Audio Handling
+            if "audio" in c_type or any(f_name.endswith(ext) for ext in ['.ogg', '.mp3', '.wav', '.m4a', '.aac']):
                 try:
                     audio_bytes = await attachment.read()
-                    mime = c_type if c_type else "audio/ogg"
+                    mime = c_type if "audio" in c_type else ("audio/ogg" if f_name.endswith('.ogg') else "audio/mp3")
                     new_parts.append(types.Part.from_bytes(data=audio_bytes, mime_type=mime))
+                    user_text += f"\n[Sent a Voice Note / Audio memo: {attachment.filename}]"
                 except Exception as e:
                     print(f"Audio read error: {e}")
 
-            # 2. Images
-            elif "image" in c_type or any(fname.endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.webp', '.gif']):
-                try:
-                    img_bytes = await attachment.read()
-                    mime = "image/png" if ".png" in fname else ("image/webp" if ".webp" in fname else "image/jpeg")
-                    new_parts.append(types.Part.from_bytes(data=img_bytes, mime_type=mime))
-                except Exception as e:
-                    print(f"Image read error: {e}")
-
-            # 3. Documents / Code files
-            elif any(fname.endswith(ext) for ext in ['.txt', '.md', '.csv', '.json', '.py', '.log', '.js', '.html']):
+            # 2. Text / Code Files
+            elif any(f_name.endswith(ext) for ext in ['.txt', '.md', '.csv', '.json', '.py', '.log', '.js', '.html']):
                 try:
                     file_bytes = await attachment.read()
                     text_content = file_bytes.decode('utf-8', errors='ignore')
@@ -418,13 +444,22 @@ async def on_message(message):
                 except Exception as e:
                     print(f"Text file read error: {e}")
 
-            # 4. PDFs
-            elif "pdf" in c_type or fname.endswith('.pdf'):
+            # 3. PDF Documents
+            elif "pdf" in c_type or f_name.endswith('.pdf'):
                 try:
                     pdf_bytes = await attachment.read()
                     new_parts.append(types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf"))
                 except Exception as e:
                     print(f"PDF read error: {e}")
+
+            # 4. Images
+            elif "image" in c_type or any(f_name.endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.webp', '.gif']):
+                try:
+                    img_bytes = await attachment.read()
+                    mime = "image/png" if f_name.endswith('.png') else ("image/webp" if f_name.endswith('.webp') else "image/jpeg")
+                    new_parts.append(types.Part.from_bytes(data=img_bytes, mime_type=mime))
+                except Exception as e:
+                    print(f"Image read error: {e}")
 
     if channel_id not in dc_buffer:
         dc_buffer[channel_id] = {'texts': [], 'attached_parts': [], 'msg_objects': [], 'reply_to': reply_to_text, 'task': None, 'channel': message.channel}
@@ -446,9 +481,7 @@ async def on_message(message):
 # ----------------- MAIN RUNNER -----------------
 async def runner():
     scheduler = AsyncIOScheduler(timezone=TIMEZONE)
-    # Nightly diary summary runs every night at 11:59 PM Manila Time
     scheduler.add_job(lambda: asyncio.create_task(nightly_diary_summary()), 'cron', hour=23, minute=59)
-    # Spontaneous texts checked during active daytime hours
     scheduler.add_job(lambda: asyncio.create_task(checkin_tick()), 'cron', hour='11,15,20', minute=30)
     scheduler.start()
 
