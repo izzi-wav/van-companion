@@ -17,7 +17,7 @@ DISCORD_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 TIMEZONE = pytz.timezone("Asia/Manila")
 
 client = genai.Client(api_key=GEMINI_KEY)
-MODEL_NAME = "gemini-2.0-flash"
+MODEL_NAME = "gemini-3.6-flash"
 
 # ----------------- SYSTEM PROMPT -----------------
 VAN_PROMPT = """
@@ -50,7 +50,7 @@ IMPORTANT FORMATTING:
 Divide your response into separate natural text bubbles using three dashes "---" on its own line (1 to 3 bubbles max).
 """
 
-# ----------------- DATABASE (MEMORY & SELF-LEARNING) -----------------
+# ----------------- DATABASE (MEMORY) -----------------
 def get_db():
     conn = sqlite3.connect("van_memory.db", check_same_thread=False)
     conn.execute("""
@@ -59,13 +59,6 @@ def get_db():
         source TEXT,
         sender TEXT,
         content TEXT,
-        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-    """)
-    conn.execute("""
-    CREATE TABLE IF NOT EXISTS learned_memories (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        fact TEXT UNIQUE,
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
     )
     """)
@@ -81,7 +74,7 @@ def save_message(source, sender, content):
     except Exception as e:
         print(f"Error saving message: {e}")
 
-def get_recent_history(limit=15):
+def get_recent_history(limit=20):
     try:
         conn = get_db()
         cur = conn.cursor()
@@ -92,49 +85,10 @@ def get_recent_history(limit=15):
     except Exception:
         return ""
 
-def get_all_learned_facts():
-    try:
-        conn = get_db()
-        cur = conn.cursor()
-        cur.execute("SELECT fact FROM learned_memories ORDER BY id ASC")
-        rows = cur.fetchall()
-        conn.close()
-        if not rows:
-            return "- Izzi is solo creative/tech lead at church (OBS, PTZ, switcher, Canva)\n- Starting salary: 16k gross\n- Likes Cocopan donuts (chocolate/glazed), Mel's Tea pancit, iced matcha\n- Apple Music user (on BFF plan)\n- Electric fan level 3 in room (no AC)"
-        return "\n".join([f"- {r[0]}" for r in rows])
-    except Exception:
-        return ""
-
-async def extract_facts_background(user_text):
-    if len(user_text.strip()) < 30:
-        return
-    extract_prompt = f"""
-Analyze this text from Izzi: "{user_text}"
-Did Izzi share a specific personal fact, life event, preference, work detail, or running joke?
-If YES, extract it as 1 short statement (e.g. "Izzi loves matcha latte").
-If NO new fact was shared, reply with "NONE".
-Reply with ONLY the statement or "NONE".
-"""
-    try:
-        resp = await asyncio.to_thread(
-            client.models.generate_content,
-            model=MODEL_NAME,
-            contents=extract_prompt
-        )
-        fact = resp.text.strip()
-        if fact and "NONE" not in fact.upper() and len(fact) < 150:
-            conn = get_db()
-            conn.execute("INSERT OR IGNORE INTO learned_memories (fact) VALUES (?)", (fact.lstrip("- *"),))
-            conn.commit()
-            conn.close()
-    except Exception:
-        pass
-
 # ----------------- GEMINI GENERATION -----------------
 async def ask_van(new_user_text, image_bytes_list=None, reply_context=""):
     now_str = datetime.now(TIMEZONE).strftime("%A, %I:%M %p")
     chat_history = get_recent_history()
-    learned_notes = get_all_learned_facts()
     
     quoted_block = f"\n[IZZI QUOTED THIS MESSAGE: \"{reply_context}\"]\n" if reply_context else ""
 
@@ -143,8 +97,12 @@ async def ask_van(new_user_text, image_bytes_list=None, reply_context=""):
 [CURRENT STATUS]
 Time: {now_str} (Manila Time)
 
-[VAN'S MEMORY & LEARNED FACTS ABOUT IZZI]
-{learned_notes}
+[BASELINE MEMORY NOTES ABOUT IZZI]
+- Solo creative/tech lead at church (OBS, PTZ cameras, switcher, Canva)
+- Starting salary: 16k gross
+- Likes Cocopan donuts (chocolate/glazed), Mel's Tea pancit, iced matcha
+- Apple Music user (on BFF plan)
+- Electric fan level 3 in room (no AC)
 {quoted_block}
 [RECENT CONVERSATION HISTORY]
 {chat_history}
@@ -179,11 +137,6 @@ discord_bot = commands.Bot(command_prefix="!", intents=intents)
 
 dc_buffer = {}
 
-@discord_bot.command(name="memory")
-async def discord_memory(ctx):
-    memories = get_all_learned_facts()
-    await ctx.send(f"📖 **Van's Learned Memories:**\n\n{memories}")
-
 async def flush_dc_buffer(channel_id):
     await asyncio.sleep(4.0)
     data = dc_buffer.pop(channel_id, None)
@@ -204,8 +157,6 @@ async def flush_dc_buffer(channel_id):
         formatted_prompt = texts[0] if texts else ""
 
     save_message("discord", "Izzi", combined_text if combined_text else "[Sent Images]")
-    if combined_text:
-        asyncio.create_task(extract_facts_background(combined_text))
 
     async with channel.typing():
         try:
@@ -254,10 +205,6 @@ async def flush_dc_buffer(channel_id):
 @discord_bot.event
 async def on_message(message):
     if message.author == discord_bot.user:
-        return
-
-    if message.content.startswith("!"):
-        await discord_bot.process_commands(message)
         return
 
     channel_id = message.channel.id
