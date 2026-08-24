@@ -3,13 +3,14 @@ import re
 import asyncio
 import sqlite3
 import random
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 
 import discord
 from discord.ext import commands
 from google import genai
 from google.genai import types
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # ----------------- CONFIG & SECRETS -----------------
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
@@ -62,6 +63,13 @@ def get_db():
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
     )
     """)
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS learned_memories (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        fact TEXT UNIQUE,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
     conn.commit()
     return conn
 
@@ -85,10 +93,69 @@ def get_recent_history(limit=20):
     except Exception:
         return ""
 
+def get_today_chat_log():
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        # Fetch messages from the last 24 hours
+        cur.execute("SELECT sender, content FROM messages WHERE timestamp >= datetime('now', '-1 day') ORDER BY id ASC")
+        rows = cur.fetchall()
+        conn.close()
+        return "\n".join([f"{sender}: {content}" for sender, content in rows])
+    except Exception:
+        return ""
+
+def get_all_learned_facts():
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT fact FROM learned_memories ORDER BY id ASC")
+        rows = cur.fetchall()
+        conn.close()
+        if not rows:
+            return "- Izzi is solo creative/tech lead at church (OBS, PTZ, switcher, Canva)\n- Starting salary: 16k gross\n- Likes Cocopan donuts (chocolate/glazed), Mel's Tea pancit, iced matcha\n- Apple Music user (on BFF plan)\n- Electric fan level 3 in room (no AC)"
+        return "\n".join([f"- {r[0]}" for r in rows])
+    except Exception:
+        return ""
+
+# ----------------- NIGHTLY DIARY TASK (1 API CALL PER DAY) -----------------
+async def nightly_diary_summary():
+    chat_log = get_today_chat_log()
+    if not chat_log or len(chat_log.strip()) < 50:
+        return
+
+    summary_prompt = f"""
+Here is the chat log between Izzi and Van from today:
+{chat_log}
+
+Task: Extract 1 to 3 new key facts, life events, game progress, preferences, or personal details about Izzi learned today.
+Format: Bullet points starting with "-" (e.g. "- Beat the Wall of Flesh in Terraria today").
+If nothing notable was shared, reply ONLY with "NONE".
+"""
+    try:
+        resp = await asyncio.to_thread(
+            client.models.generate_content,
+            model=MODEL_NAME,
+            contents=summary_prompt
+        )
+        text = resp.text.strip()
+        if text and "NONE" not in text.upper():
+            conn = get_db()
+            for line in text.split("\n"):
+                clean_fact = line.strip().lstrip("- *").strip()
+                if clean_fact and len(clean_fact) < 150:
+                    conn.execute("INSERT OR IGNORE INTO learned_memories (fact) VALUES (?)", (clean_fact,))
+            conn.commit()
+            conn.close()
+            print(f"[NIGHTLY DIARY] Successfully saved new memories: {text}")
+    except Exception as e:
+        print(f"[NIGHTLY DIARY ERROR] {e}")
+
 # ----------------- GEMINI GENERATION -----------------
 async def ask_van(new_user_text, image_bytes_list=None, reply_context=""):
     now_str = datetime.now(TIMEZONE).strftime("%A, %I:%M %p")
     chat_history = get_recent_history()
+    learned_notes = get_all_learned_facts()
     
     quoted_block = f"\n[IZZI QUOTED THIS MESSAGE: \"{reply_context}\"]\n" if reply_context else ""
 
@@ -97,12 +164,8 @@ async def ask_van(new_user_text, image_bytes_list=None, reply_context=""):
 [CURRENT STATUS]
 Time: {now_str} (Manila Time)
 
-[BASELINE MEMORY NOTES ABOUT IZZI]
-- Solo creative/tech lead at church (OBS, PTZ cameras, switcher, Canva)
-- Starting salary: 16k gross
-- Likes Cocopan donuts (chocolate/glazed), Mel's Tea pancit, iced matcha
-- Apple Music user (on BFF plan)
-- Electric fan level 3 in room (no AC)
+[VAN'S MEMORY & LEARNED FACTS ABOUT IZZI]
+{learned_notes}
 {quoted_block}
 [RECENT CONVERSATION HISTORY]
 {chat_history}
@@ -136,6 +199,19 @@ intents.message_content = True
 discord_bot = commands.Bot(command_prefix="!", intents=intents)
 
 dc_buffer = {}
+
+@discord_bot.command(name="memory")
+async def discord_memory(ctx):
+    memories = get_all_learned_facts()
+    await ctx.send(f"📖 **Van's Learned Memories:**\n\n{memories}")
+
+# Command to manually test diary entry extraction anytime
+@discord_bot.command(name="savediary")
+async def discord_savediary(ctx):
+    await ctx.send("📝 Writing today's diary entry into permanent memory...")
+    await nightly_diary_summary()
+    memories = get_all_learned_facts()
+    await ctx.send(f"✅ **Updated Memories:**\n\n{memories}")
 
 async def flush_dc_buffer(channel_id):
     await asyncio.sleep(4.0)
@@ -207,6 +283,10 @@ async def on_message(message):
     if message.author == discord_bot.user:
         return
 
+    if message.content.startswith("!"):
+        await discord_bot.process_commands(message)
+        return
+
     channel_id = message.channel.id
     user_text = message.content or ""
     
@@ -238,8 +318,16 @@ async def on_message(message):
     dc_buffer[channel_id]['task'] = asyncio.create_task(flush_dc_buffer(channel_id))
 
 # ----------------- MAIN RUNNER -----------------
+async def runner():
+    # Setup scheduler for 11:59 PM Manila Time
+    scheduler = AsyncIOScheduler(timezone=TIMEZONE)
+    scheduler.add_job(lambda: asyncio.create_task(nightly_diary_summary()), 'cron', hour=23, minute=59)
+    scheduler.start()
+
+    await discord_bot.start(DISCORD_TOKEN)
+
 def main():
-    discord_bot.run(DISCORD_TOKEN)
+    asyncio.run(runner())
 
 if __name__ == "__main__":
     main()
