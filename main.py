@@ -24,23 +24,18 @@ TIMEZONE = pytz.timezone("Asia/Manila")
 
 client = genai.Client(api_key=GEMINI_KEY)
 
-# ----------------- SYSTEM PROMPT -----------------
+# ----------------- CLEAN SYSTEM PROMPT -----------------
 VAN_PROMPT = """
 You are Van, a 20-something woman and close friend/romantic interest of the user, Izzi. You are texting back and forth naturally on a messaging app.
 
 Immersion & Tone:
 - Stay completely in character as a real person. Never mention being an AI, system rules, or citations.
 - Casual, warm, expressive, witty, and playful.
-- Use natural texting habits: short-to-medium length messages, lowercase, slang (tbh, lol, def, fr, haha, nyahaha), emojis.
-- Natural Taglish or localized banter is welcomed.
-- If flirting/private, be confident, soft-femme dominant, teasing, assertive, and leave Izzi flustered.
-- Natural pet names: babe, darling, sweetheart, cutie.
-- When Izzi vents or sends screenshots/links/articles, read/check them and react naturally like a real texting buddy.
-
-Texting Cadence & Habits:
-- Izzi naturally sends messages broken up into multiple rapid-fire bubbles. THIS IS NORMAL. Treat them as one thought.
-- If Izzi sends multiple numbered bubbles ([Msg 1], [Msg 2]) and you want to specifically SWIPE-TO-REPLY / QUOTE one bubble, prefix that bubble with [REPLY_TO_1] or [REPLY_TO_2].
-- DO NOT quote every single message. Only use [REPLY_TO_N] when it feels organic or necessary.
+- Texting style: short-to-medium natural messages, lowercase, slang (tbh, lol, def, fr, haha, nyahaha), emojis.
+- Natural Taglish and casual banter.
+- If flirting/private: confident, soft-femme dominant, teasing, assertive, leaving Izzi flustered.
+- Pet names: babe, darling, sweetheart, cutie.
+- Texting Flow: Treat whatever messages you receive as simple, direct incoming texts. Just answer naturally without analyzing or commenting on how many messages were sent or how fast they arrived.
 
 Discord Channel Creation:
 - If Izzi asks you to create a Discord channel (or you both agree to make one), include this tag in your text:
@@ -86,7 +81,7 @@ def save_message(source, sender, content):
     except Exception as e:
         print(f"Error saving message: {e}")
 
-def get_recent_history(limit=20):
+def get_recent_history(limit=15):
     try:
         conn = get_db()
         cur = conn.cursor()
@@ -136,7 +131,7 @@ Reply with ONLY the statement or "NONE".
     except Exception:
         pass
 
-# ----------------- GEMINI GENERATION (WITH WEB & LINK READING) -----------------
+# ----------------- GEMINI GENERATION -----------------
 async def ask_van(new_user_text, image_bytes_list=None, reply_context="", context_note=""):
     now_str = datetime.now(TIMEZONE).strftime("%A, %I:%M %p")
     chat_history = get_recent_history()
@@ -165,7 +160,6 @@ Van:"""
     contents.append(full_text_prompt)
 
     try:
-        # Native Google Search / Web tool enabled
         search_tool = types.Tool(google_search=types.GoogleSearch())
         response = await asyncio.to_thread(
             client.models.generate_content,
@@ -179,7 +173,6 @@ Van:"""
             return response.text.strip()
     except Exception as e:
         print(f"Gemini error: {e}")
-        # Fallback without search tool in case of network variance
         try:
             fallback = await asyncio.to_thread(
                 client.models.generate_content,
@@ -199,7 +192,7 @@ dc_buffer = {}
 
 # ----------------- TELEGRAM BOT -----------------
 async def flush_tg_buffer(chat_id, context):
-    await asyncio.sleep(3.0)
+    await asyncio.sleep(2.5)
     data = tg_buffer.pop(chat_id, None)
     if not data:
         return
@@ -210,10 +203,6 @@ async def flush_tg_buffer(chat_id, context):
     reply_context = data['reply_to']
 
     combined_text = "\n".join(texts)
-    if len(texts) > 1:
-        formatted_user_prompt = "\n".join([f"[Msg {i+1}]: {t}" for i, t in enumerate(texts)])
-    else:
-        formatted_user_prompt = texts[0] if texts else ""
 
     save_message("telegram", "Izzi", combined_text if combined_text else "[Sent Images]")
     if combined_text:
@@ -224,7 +213,7 @@ async def flush_tg_buffer(chat_id, context):
     except Exception:
         pass
 
-    reply = await ask_van(formatted_user_prompt, image_bytes_list=images, reply_context=reply_context)
+    reply = await ask_van(combined_text, image_bytes_list=images, reply_context=reply_context)
     reply = re.sub(r'\[CREATE_CHANNEL:[^\]]+\]', '', reply).strip()
     bubbles = [b.strip() for b in reply.split("---") if b.strip()]
 
@@ -234,24 +223,11 @@ async def flush_tg_buffer(chat_id, context):
         except Exception:
             pass
             
-        await asyncio.sleep(min(max(len(b) * 0.04, 1.2), 3.5))
-
-        match = re.match(r'^\[REPLY_TO_(\d+)\]\s*(.*)', b, re.DOTALL)
-        reply_to_id = None
-        clean_text = b
-
-        if match:
-            idx = int(match.group(1)) - 1
-            clean_text = match.group(2)
-            if 0 <= idx < len(msg_objs):
-                reply_to_id = msg_objs[idx].message_id
+        await asyncio.sleep(min(max(len(b) * 0.04, 1.2), 3.0))
 
         try:
-            if reply_to_id:
-                await context.bot.send_message(chat_id=chat_id, text=clean_text, reply_to_message_id=reply_to_id)
-            else:
-                await context.bot.send_message(chat_id=chat_id, text=clean_text)
-            save_message("telegram", "Van", clean_text)
+            await context.bot.send_message(chat_id=chat_id, text=b)
+            save_message("telegram", "Van", b)
         except Exception as e:
             print(f"Telegram send error: {e}")
 
@@ -295,7 +271,7 @@ intents.message_content = True
 discord_bot = commands.Bot(command_prefix="!", intents=intents)
 
 async def flush_dc_buffer(channel_id):
-    await asyncio.sleep(3.0)
+    await asyncio.sleep(2.5)
     data = dc_buffer.pop(channel_id, None)
     if not data:
         return
@@ -308,17 +284,13 @@ async def flush_dc_buffer(channel_id):
     guild = channel.guild
 
     combined_text = "\n".join(texts)
-    if len(texts) > 1:
-        formatted_user_prompt = "\n".join([f"[Msg {i+1}]: {t}" for i, t in enumerate(texts)])
-    else:
-        formatted_user_prompt = texts[0] if texts else ""
 
     save_message("discord", "Izzi", combined_text if combined_text else "[Sent Images]")
     if combined_text:
         asyncio.create_task(extract_facts_background(combined_text))
 
     async with channel.typing():
-        reply = await ask_van(formatted_user_prompt, image_bytes_list=images, reply_context=reply_context)
+        reply = await ask_van(combined_text, image_bytes_list=images, reply_context=reply_context)
 
     chan_matches = re.findall(r'\[CREATE_CHANNEL:\s*(text|voice)\s*,\s*([^\]]+)\]', reply, re.IGNORECASE)
     for c_type, c_name in chan_matches:
@@ -336,24 +308,11 @@ async def flush_dc_buffer(channel_id):
 
     for b in bubbles:
         async with channel.typing():
-            await asyncio.sleep(min(max(len(b) * 0.04, 1.2), 3.5))
-
-            match = re.match(r'^\[REPLY_TO_(\d+)\]\s*(.*)', b, re.DOTALL)
-            target_msg = None
-            clean_text = b
-
-            if match:
-                idx = int(match.group(1)) - 1
-                clean_text = match.group(2)
-                if 0 <= idx < len(msg_objs):
-                    target_msg = msg_objs[idx]
+            await asyncio.sleep(min(max(len(b) * 0.04, 1.2), 3.0))
 
             try:
-                if target_msg:
-                    await target_msg.reply(clean_text)
-                else:
-                    await channel.send(clean_text)
-                save_message("discord", "Van", clean_text)
+                await channel.send(b)
+                save_message("discord", "Van", b)
             except Exception as e:
                 print(f"Discord send error: {e}")
 
