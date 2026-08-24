@@ -180,36 +180,43 @@ async def generate_with_fallback(model, contents, config):
                 raise e2
         raise e
 
-# ----------------- NIGHTLY DIARY TASK -----------------
+# ----------------- COMPREHENSIVE NIGHTLY DIARY TASK -----------------
 async def nightly_diary_summary():
     chat_log = get_today_chat_log()
-    if not chat_log or len(chat_log.strip()) < 50:
+    if not chat_log or len(chat_log.strip()) < 30:
         return
 
     summary_prompt = f"""
-Here is the chat log between Izzi and Van from today:
+Here is the full chat log between Izzi and Van from today:
 {chat_log}
 
-Task: Extract 1 to 3 new key facts, life events, preferences, or details about Izzi learned today.
-Format: Bullet points starting with "-" (e.g. "- Made a new guide bible for church OBS setup").
-If nothing notable was shared, reply ONLY with "NONE".
+Task:
+Extract comprehensive memories from today's conversation. Include:
+1. Personal facts, preferences, life updates, work/church events, and financial/salary details.
+2. Emotional moments, vents, inside jokes, and daily habits.
+3. Specific tasks planned or games played.
+
+Format:
+Return 3 to 8 clear, detailed bullet points starting with "-" (e.g. "- Surviving church audio issues with power cycling / hugot-saksak method").
+If there is genuinely zero useful context, reply ONLY with "NONE".
 """
     try:
         resp = await generate_with_fallback(
             MODEL_SMALL,
             summary_prompt,
-            types.GenerateContentConfig(max_output_tokens=200, temperature=0.2)
+            types.GenerateContentConfig(max_output_tokens=600, temperature=0.3)
         )
-        text = resp.text.strip()
-        if text and "NONE" not in text.upper():
-            conn = get_db()
-            for line in text.split("\n"):
-                clean_fact = line.strip().lstrip("- *").strip()
-                if clean_fact and len(clean_fact) < 150:
-                    conn.execute("INSERT OR IGNORE INTO learned_memories (fact) VALUES (?)", (clean_fact,))
-            conn.commit()
-            conn.close()
-            print(f"[NIGHTLY DIARY] Successfully saved: {text}")
+        if resp and resp.text:
+            text = resp.text.strip()
+            if text and "NONE" not in text.upper():
+                conn = get_db()
+                for line in text.split("\n"):
+                    clean_fact = line.strip().lstrip("- *").strip()
+                    if clean_fact and len(clean_fact) < 250:
+                        conn.execute("INSERT OR IGNORE INTO learned_memories (fact) VALUES (?)", (clean_fact,))
+                conn.commit()
+                conn.close()
+                print(f"[NIGHTLY DIARY] Successfully saved: {text}")
     except Exception as e:
         print(f"[NIGHTLY DIARY ERROR] {e}")
 
@@ -257,7 +264,7 @@ Van:"""
                 ]
             )
         )
-        return resp.text.strip()
+        return resp.text.strip() if resp and resp.text else "sorry babe, nag-lag saglit net ko haha. ano ulit yon?"
     except Exception as e:
         print(f"[ASK_VAN ERROR] generation failed: {e}")
         return "sorry babe, nag-lag saglit net ko haha. ano ulit yon?"
