@@ -262,7 +262,7 @@ Van:"""
 # ----------------- DISCORD BOT SETUP -----------------
 intents = discord.Intents.default()
 intents.message_content = True
-intents.typing = True  # ENABLE TYPING DETECTION
+intents.typing = True
 
 discord_bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -318,7 +318,8 @@ async def flush_dc_buffer(channel_id):
     global last_active_channel_id
     last_active_channel_id = channel_id
 
-    await asyncio.sleep(4.0)
+    # Wait 5.5 seconds of total silence before processing
+    await asyncio.sleep(5.5)
     data = dc_buffer.pop(channel_id, None)
     if not data:
         return
@@ -385,11 +386,10 @@ async def flush_dc_buffer(channel_id):
 # ----------------- TYPING EVENT LISTENER -----------------
 @discord_bot.event
 async def on_typing(channel, user, when):
-    # Ignore bot's own typing
     if user == discord_bot.user:
         return
 
-    # If you start typing while a previous message is in the buffer, EXTEND the timer!
+    # If you start typing, delay the buffer to give you time to finish
     if channel.id in dc_buffer and dc_buffer[channel.id]['task'] and not dc_buffer[channel.id]['task'].done():
         dc_buffer[channel.id]['task'].cancel()
         dc_buffer[channel.id]['task'] = asyncio.create_task(flush_dc_buffer(channel.id))
