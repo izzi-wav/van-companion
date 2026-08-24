@@ -17,6 +17,7 @@ DISCORD_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 TIMEZONE = pytz.timezone("Asia/Manila")
 
 client = genai.Client(api_key=GEMINI_KEY)
+MODEL_NAME = "gemini-3.6-flash"
 
 # ----------------- SYSTEM PROMPT -----------------
 VAN_PROMPT = """
@@ -105,11 +106,12 @@ def get_all_learned_facts():
         return ""
 
 async def extract_facts_background(user_text):
-    if len(user_text.strip()) < 10:
+    # Only run extractor on longer, substantive texts to save API calls
+    if len(user_text.strip()) < 25:
         return
     extract_prompt = f"""
 Analyze this text from Izzi: "{user_text}"
-Did Izzi share a personal fact, life event, preference, work detail, or running joke?
+Did Izzi share a specific personal fact, life event, preference, work detail, or running joke?
 If YES, extract it as 1 short statement (e.g. "Izzi loves matcha latte").
 If NO new fact was shared, reply with "NONE".
 Reply with ONLY the statement or "NONE".
@@ -117,7 +119,7 @@ Reply with ONLY the statement or "NONE".
     try:
         resp = await asyncio.to_thread(
             client.models.generate_content,
-            model="gemini-2.5-flash",
+            model=MODEL_NAME,
             contents=extract_prompt
         )
         fact = resp.text.strip()
@@ -158,7 +160,7 @@ Van:"""
 
     response = await asyncio.to_thread(
         client.models.generate_content,
-        model="gemini-2.5-flash",
+        model=MODEL_NAME,
         contents=contents,
         config=types.GenerateContentConfig(
             safety_settings=[
