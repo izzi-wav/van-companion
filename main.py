@@ -117,7 +117,7 @@ Reply with ONLY the statement or "NONE".
     try:
         resp = await asyncio.to_thread(
             client.models.generate_content,
-            model="gemini-3.6-flash",
+            model="gemini-2.5-flash",
             contents=extract_prompt
         )
         fact = resp.text.strip()
@@ -158,7 +158,7 @@ Van:"""
 
     response = await asyncio.to_thread(
         client.models.generate_content,
-        model="gemini-3.6-flash",
+        model="gemini-2.5-flash",
         contents=contents,
         config=types.GenerateContentConfig(
             safety_settings=[
