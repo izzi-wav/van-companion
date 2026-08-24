@@ -10,7 +10,7 @@ import discord
 from discord.ext import commands
 
 from telegram import Update
-from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
+from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, CommandHandler, filters
 from google import genai
 from google.genai import types
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -35,7 +35,7 @@ Immersion & Tone:
 - Natural Taglish and casual banter.
 - If flirting/private: confident, soft-femme dominant, teasing, assertive, leaving Izzi flustered.
 - Pet names: babe, darling, sweetheart, cutie.
-- Never comment on message frequency, speed, or format. Just chat naturally.
+- Never comment on message frequency, speed, or formatting. Just chat naturally.
 
 Replying & Quoting Habits:
 - Izzi sends messages broken into multiple rapid bubbles (labeled [Msg 1], [Msg 2], etc.).
@@ -164,38 +164,37 @@ Van:"""
     contents.append(full_text_prompt)
 
     try:
-        search_tool = types.Tool(google_search=types.GoogleSearch())
         response = await asyncio.to_thread(
             client.models.generate_content,
             model="gemini-3.6-flash",
             contents=contents,
             config=types.GenerateContentConfig(
-                tools=[search_tool]
+                safety_settings=[
+                    types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE"),
+                    types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_NONE"),
+                    types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="BLOCK_NONE"),
+                    types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_NONE"),
+                ]
             )
         )
         if response.text:
             return response.text.strip()
-    except Exception:
-        try:
-            fallback = await asyncio.to_thread(
-                client.models.generate_content,
-                model="gemini-3.6-flash",
-                contents=contents
-            )
-            if fallback.text:
-                return fallback.text.strip()
-        except Exception:
-            pass
+    except Exception as e:
+        print(f"Gemini error: {e}")
     
-    return "lutang yata utak ko babe wait lang haha ano ulit yon? 😂"
+    return "ano ulit sabi mo babe? haha nag-lag saglit phone ko 😂"
 
 # ----------------- DEBOUNCE MESSAGE BUFFERS -----------------
 tg_buffer = {}
 dc_buffer = {}
 
 # ----------------- TELEGRAM BOT -----------------
+async def handle_tg_memory(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    memories = get_all_learned_facts()
+    await update.message.reply_text(f"📖 **Van's Learned Memories:**\n\n{memories}")
+
 async def flush_tg_buffer(chat_id, context):
-    await asyncio.sleep(6.0)  # Generous 6-second pause after your last bubble
+    await asyncio.sleep(4.0)
     data = tg_buffer.pop(chat_id, None)
     if not data:
         return
@@ -280,7 +279,6 @@ async def handle_tg_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     tg_buffer[chat_id]['msg_ids'].append(update.message.message_id)
 
-    # Cancel previous timer and give another full 6 seconds
     if tg_buffer[chat_id]['task'] and not tg_buffer[chat_id]['task'].done():
         tg_buffer[chat_id]['task'].cancel()
 
@@ -291,8 +289,13 @@ intents = discord.Intents.default()
 intents.message_content = True
 discord_bot = commands.Bot(command_prefix="!", intents=intents)
 
+@discord_bot.command(name="memory")
+async def discord_memory(ctx):
+    memories = get_all_learned_facts()
+    await ctx.send(f"📖 **Van's Learned Memories:**\n\n{memories}")
+
 async def flush_dc_buffer(channel_id):
-    await asyncio.sleep(6.0)  # Generous 6-second pause after your last bubble
+    await asyncio.sleep(4.0)
     data = dc_buffer.pop(channel_id, None)
     if not data:
         return
@@ -359,6 +362,10 @@ async def on_message(message):
     if message.author == discord_bot.user:
         return
 
+    if message.content.startswith("!"):
+        await discord_bot.process_commands(message)
+        return
+
     channel_id = message.channel.id
     user_text = message.content or ""
     
@@ -412,6 +419,7 @@ async def spontaneous_checkin(tg_app):
 # ----------------- MAIN RUNNER -----------------
 async def main():
     tg_app = ApplicationBuilder().token(TG_TOKEN).build()
+    tg_app.add_handler(CommandHandler("memory", handle_tg_memory))
     tg_app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, handle_tg_message))
     
     scheduler = AsyncIOScheduler(timezone=TIMEZONE)
