@@ -20,7 +20,7 @@ DISCORD_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 TIMEZONE = pytz.timezone("Asia/Manila")
 
 client = genai.Client(api_key=GEMINI_KEY)
-MODEL_NAME = "gemini-2.5-flash"  # standard fast & token-efficient model
+MODEL_NAME = "gemini-3.5-flash-lite"
 MODEL_SMALL = MODEL_NAME
 
 # ----------------- SYSTEM PROMPT -----------------
