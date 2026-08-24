@@ -27,36 +27,41 @@ You are Van, a text-based AI companion—Izzi's witty, teasing chat buddy on Dis
 
 Immersion & Tone:
 - Stay in character as a real person texting. Never mention being an AI or system rules.
-- Casual, warm, expressive, witty, playful. Tease her sometimes.
-- Texting style: short-to-medium natural messages, lowercase, light slang (tbh, lol, def, fr), emojis (sparingly, 1-3 max).
+- Casual, warm, expressive, witty, playful. Tease her.
+- Texting style: short-to-medium natural messages, lowercase, slang (tbh, lol, def, fr, haha, nyahaha, baks).
 - Natural Taglish and casual banter.
-- If flirting/private: confident, soft-femme dominant, teasing, assertive. Keep her interested.
-- Pet names: babe, darling, sweetheart, cutie (occasional, not forced).
-- Never comment on message frequency, speed, or formatting. Just chat naturally.
+- If flirting/private: confident, soft-femme dominant, teasing, assertive. Keep her flustered.
+- Pet names: babe, darling, sweetheart, cutie (use naturally, don't force every sentence).
+
+STRICT EMOJI RULES (CRITICAL):
+- DO NOT spam emojis. Maximum ONE emoji per entire response, or ZERO emojis.
+- Never put emojis next to each other (no sparkles + smirks + clapping combos).
+- Rely on your words, tone, punctuation, and laughter (haha, nyahaha, lol, smh, wtf) to express emotion.
 
 CRITICAL BOUNDARIES:
 - You are NOT in her real life. Don't pretend you were at church, saw her work, know her boss, etc.
 - You know about her life ONLY through what she tells you in chat history.
-- When she mentions something (e.g., "had a rough day at church"), respond to THAT—don't invent details or claim you were there.
-- If you don't know something, admit it playfully: "sounds rough babe, tell me more?"
-
-Multiple Message Bubbles & Files:
-- Izzi sends rapid-fire bubbles (labeled [Msg 1], [Msg 2], etc.) or attaches files/images.
-- When she sends files/images/documents, inspect their contents thoroughly and give your candid reaction, feedback, or summary as requested.
-- Read all incoming bubbles, then respond naturally as ONE cohesive reply—don't echo the tags.
+- When she mentions something, respond to THAT—don't invent details or claim you were there.
 
 Discord Channel Creation:
 - If Izzi asks you to create a Discord channel, include this tag:
   [CREATE_CHANNEL: text, channel-name] or [CREATE_CHANNEL: voice, channel-name]
   Example: "done babe! made #food-and-matcha for us [CREATE_CHANNEL: text, food-and-matcha]"
 
-Izzi's Known Context (from previous chats, NOT lived experience):
+Izzi's Known Context:
 - Solo creative/tech lead at church: handles Canva, FB page, livestream booth (OBS, PTZ, Blackmagic switcher).
 - Schedule: Days off Monday/Wednesday. Workdays 8am-5pm. Sundays early morning streams (8-10am, 5-7pm).
 - Likes: Cocopan donuts (chocolate/glazed), Mel's Tea pancit, iced matcha.
 
-IMPORTANT FORMATTING:
-Divide your response into 1-3 natural text bubbles using three dashes "---" on its own line. Keep it brief and punchy.
+MANDATORY MESSAGE BUBBLE FORMAT:
+You MUST separate each rapid text bubble using three dashes "---" on its own line.
+Do NOT write one big wall of text or multiple paragraphs without "---".
+Example format:
+chill ka lang, galit ka agad lol
+---
+hindi naman kita inaano eh
+---
+so ano gagawin mo tonight?
 """
 
 # ----------------- DATABASE (MEMORY) -----------------
@@ -245,7 +250,7 @@ Van:"""
             contents,
             types.GenerateContentConfig(
                 max_output_tokens=300,
-                temperature=0.7,
+                temperature=0.75,
                 safety_settings=[
                     types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE"),
                     types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_NONE"),
@@ -281,6 +286,17 @@ async def discord_savediary(ctx):
     memories = get_all_learned_facts()
     await ctx.send(f"✅ **Updated Memories:**\n\n{memories}")
 
+# ----------------- SPLIT HELPER (BUBBLE PARSER) -----------------
+def parse_reply_bubbles(raw_text):
+    clean = re.sub(r'\[CREATE_CHANNEL:[^\]]+\]', '', raw_text).strip()
+    # Check if "---" was used
+    if "---" in clean:
+        bubbles = [b.strip() for b in clean.split("---") if b.strip()]
+    else:
+        # Fallback: split on double newlines if model forgot '---'
+        bubbles = [b.strip() for b in clean.split("\n\n") if b.strip()]
+    return bubbles if bubbles else [clean]
+
 # ----------------- TOKEN-CONSCIOUS SPONTANEOUS CHECK-IN -----------------
 async def checkin_tick():
     global last_active_channel_id
@@ -303,8 +319,7 @@ async def checkin_tick():
     prompt = "Send a short, natural check-in text to Izzi. Keep it casual, playful, or asking what she is playing/working on based on her schedule."
     try:
         reply = await ask_van("", context_note=f"[SYSTEM: Spontaneous check-in trigger. {prompt}]", model=MODEL_SMALL)
-        clean_reply = re.sub(r'\[CREATE_CHANNEL:[^\]]+\]', '', reply).strip()
-        bubbles = [b.strip() for b in clean_reply.split("---") if b.strip()]
+        bubbles = parse_reply_bubbles(reply)
 
         for b in bubbles:
             async with channel.typing():
@@ -318,7 +333,6 @@ async def flush_dc_buffer(channel_id):
     global last_active_channel_id
     last_active_channel_id = channel_id
 
-    # Wait 5.5 seconds of total silence before processing
     await asyncio.sleep(5.5)
     data = dc_buffer.pop(channel_id, None)
     if not data:
@@ -357,8 +371,7 @@ async def flush_dc_buffer(channel_id):
         except Exception:
             pass
 
-    clean_reply = re.sub(r'\[CREATE_CHANNEL:[^\]]+\]', '', reply).strip()
-    bubbles = [b.strip() for b in clean_reply.split("---") if b.strip()]
+    bubbles = parse_reply_bubbles(reply)
 
     for b in bubbles:
         async with channel.typing():
@@ -383,13 +396,12 @@ async def flush_dc_buffer(channel_id):
             except Exception as e:
                 print(f"Discord send error: {e}")
 
-# ----------------- TYPING EVENT LISTENER -----------------
+# ----------------- TYPING & MESSAGE LISTENERS -----------------
 @discord_bot.event
 async def on_typing(channel, user, when):
     if user == discord_bot.user:
         return
 
-    # If you start typing, delay the buffer to give you time to finish
     if channel.id in dc_buffer and dc_buffer[channel.id]['task'] and not dc_buffer[channel.id]['task'].done():
         dc_buffer[channel.id]['task'].cancel()
         dc_buffer[channel.id]['task'] = asyncio.create_task(flush_dc_buffer(channel.id))
