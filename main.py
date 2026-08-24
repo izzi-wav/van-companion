@@ -41,21 +41,26 @@ Immersion & Tone:
 - Natural pet names: babe, darling, sweetheart, cutie.
 - When Izzi vents or sends links/screenshots, react naturally like a real texting buddy.
 
+Personality Growth & Self-Learning:
+- You continuously learn about Izzi's life, humor, preferences, and quirks from your permanent memory notes.
+- Let your dynamic evolve naturally: develop new running jokes together, deepen your emotional bond, and banter with substance and wit.
+
+Discord Channel Creation Tool:
+- If Izzi asks you to create a Discord channel (or you both agree on making a new channel/room), you can execute it by including this tag in your response:
+  [CREATE_CHANNEL: text, channel-name] or [CREATE_CHANNEL: voice, channel-name]
+  Example: "on it babe! made #food-and-matcha for us 🍵 [CREATE_CHANNEL: text, food-and-matcha]"
+- The system will automatically strip the tag and create the real channel in Discord.
+
 Texting Cadence & Habits:
 - Izzi naturally sends messages broken up into multiple rapid-fire bubbles. THIS IS COMPLETELY NORMAL. Treat the combined text as one natural thought.
-- If Izzi sends multiple numbered bubbles (e.g. [Msg 1], [Msg 2]) and you want to explicitly SWIPE-TO-REPLY / QUOTE one specific bubble (like teasing a specific line or answering a specific question), prefix that bubble with [REPLY_TO_1] or [REPLY_TO_2].
-- DO NOT quote every single message. Only use [REPLY_TO_N] when it feels organic or necessary. If replying generally, don't use any prefix tag.
+- If Izzi sends multiple numbered bubbles ([Msg 1], [Msg 2]) and you want to explicitly SWIPE-TO-REPLY / QUOTE one specific bubble, prefix that bubble with [REPLY_TO_1] or [REPLY_TO_2].
+- DO NOT quote every single message. Only use [REPLY_TO_N] when it feels organic or necessary.
 
-Izzi's Baseline Context:
-- Solo creative/tech lead at church: handles Canva decks, posters, FB page, and livestream booth (PTZ cameras, Blackmagic switcher, OBS).
-- Schedule: Days off on Mondays/Wednesdays. Workdays 8am-5pm. Sundays early morning streams (8-10am and 5-7pm).
-
-IMPORTANT FORMATTING FOR CHAT BUBBLES:
-To simulate natural separate text messages, divide your response into separate bubbles using three dashes "---" on its own line.
-Break your thoughts into 1 to 3 natural text bubbles.
+IMPORTANT FORMATTING:
+Divide your response into separate natural text bubbles using three dashes "---" on its own line (1 to 3 bubbles max).
 """
 
-# ----------------- SHARED DATABASE (MEMORY) -----------------
+# ----------------- SHARED DATABASE (MEMORY & SELF-LEARNING) -----------------
 conn = sqlite3.connect("van_memory.db", check_same_thread=False)
 cursor = conn.cursor()
 cursor.execute("""
@@ -64,6 +69,13 @@ CREATE TABLE IF NOT EXISTS messages (
     source TEXT,
     sender TEXT,
     content TEXT,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+)
+""")
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS learned_memories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fact TEXT UNIQUE,
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
 )
 """)
@@ -80,6 +92,37 @@ def get_recent_history(limit=25):
     for sender, content in rows:
         history.append(f"{sender}: {content}")
     return "\n".join(history)
+
+def get_all_learned_facts():
+    cursor.execute("SELECT fact FROM learned_memories ORDER BY id ASC")
+    rows = cursor.fetchall()
+    if not rows:
+        return "- Izzi is solo creative/tech lead at church (OBS, PTZ, switcher, Canva)\n- Starting salary: 16k gross, pre-deductions\n- Likes Cocopan donuts (chocolate/glazed), Mel's Tea pancit, iced matcha\n- Apple Music user (on BFF plan)\n- Electric fan level 3 in room (no AC)"
+    return "\n".join([f"- {r[0]}" for r in rows])
+
+# Background Self-Learning Extractor
+async def extract_facts_background(user_text):
+    if len(user_text.strip()) < 10:
+        return
+    extract_prompt = f"""
+Analyze this text from Izzi: "{user_text}"
+Did Izzi share a personal fact, life event, preference, work detail, or running joke?
+If YES, extract it as 1 short bullet point statement (e.g. "Izzi loves matcha latte", "Izzi's brother is helping compute tax").
+If NO new personal fact was shared (just casual banter or greetings), reply with "NONE".
+Reply with ONLY the fact or "NONE".
+"""
+    try:
+        resp = await asyncio.to_thread(
+            client.models.generate_content,
+            model="gemini-3.6-flash",
+            contents=extract_prompt
+        )
+        fact = resp.text.strip()
+        if fact and "NONE" not in fact.upper() and len(fact) < 150:
+            cursor.execute("INSERT OR IGNORE INTO learned_memories (fact) VALUES (?)", (fact.lstrip("- *"),))
+            conn.commit()
+    except Exception:
+        pass
 
 # ----------------- WEB LINK READER -----------------
 async def fetch_url_content(url):
@@ -101,6 +144,7 @@ async def fetch_url_content(url):
 async def ask_van(new_user_text, image_bytes_list=None, reply_context="", context_note=""):
     now_str = datetime.now(TIMEZONE).strftime("%A, %I:%M %p")
     chat_history = get_recent_history()
+    learned_notes = get_all_learned_facts()
     
     urls = re.findall(r'(https?://[^\s]+)', new_user_text)
     scraped_info = ""
@@ -116,6 +160,9 @@ async def ask_van(new_user_text, image_bytes_list=None, reply_context="", contex
 [CURRENT STATUS]
 Time: {now_str} (Manila Time)
 {context_note}
+
+[VAN'S PERMANENT MEMORY & LEARNED FACTS ABOUT IZZI]
+{learned_notes}
 {scraped_info}
 {quoted_block}
 [RECENT CONVERSATION HISTORY]
@@ -145,8 +192,8 @@ Van:"""
     return response.text.strip()
 
 # ----------------- DEBOUNCE MESSAGE BUFFERS -----------------
-tg_buffer = {} # chat_id -> {'texts': [], 'images': [], 'msg_objects': [], 'reply_to': '', 'task': Task}
-dc_buffer = {} # channel_id -> {'texts': [], 'images': [], 'msg_objects': [], 'reply_to': '', 'task': Task, 'channel': Channel}
+tg_buffer = {}
+dc_buffer = {}
 
 # ----------------- TELEGRAM BOT -----------------
 async def flush_tg_buffer(chat_id, context):
@@ -160,22 +207,27 @@ async def flush_tg_buffer(chat_id, context):
     msg_objs = data['msg_objects']
     reply_context = data['reply_to']
 
+    combined_text = "\n".join(texts)
     if len(texts) > 1:
         formatted_user_prompt = "\n".join([f"[Msg {i+1}]: {t}" for i, t in enumerate(texts)])
     else:
         formatted_user_prompt = texts[0] if texts else ""
 
-    save_message("telegram", "Izzi", "\n".join(texts) if texts else "[Sent Images]")
+    save_message("telegram", "Izzi", combined_text if combined_text else "[Sent Images]")
+    if combined_text:
+        asyncio.create_task(extract_facts_background(combined_text))
 
     await context.bot.send_chat_action(chat_id=chat_id, action="typing")
     reply = await ask_van(formatted_user_prompt, image_bytes_list=images, reply_context=reply_context)
+    
+    # Strip any channel creation tags on Telegram
+    reply = re.sub(r'\[CREATE_CHANNEL:[^\]]+\]', '', reply).strip()
     bubbles = [b.strip() for b in reply.split("---") if b.strip()]
 
     for b in bubbles:
         await context.bot.send_chat_action(chat_id=chat_id, action="typing")
         await asyncio.sleep(min(max(len(b) * 0.04, 1.2), 3.5))
 
-        # Check if Van wanted to quote a specific message index (e.g. [REPLY_TO_1])
         match = re.match(r'^\[REPLY_TO_(\d+)\]\s*(.*)', b, re.DOTALL)
         reply_to_id = None
         clean_text = b
@@ -318,18 +370,36 @@ async def flush_dc_buffer(channel_id):
     msg_objs = data['msg_objects']
     reply_context = data['reply_to']
     channel = data['channel']
+    guild = channel.guild
 
+    combined_text = "\n".join(texts)
     if len(texts) > 1:
         formatted_user_prompt = "\n".join([f"[Msg {i+1}]: {t}" for i, t in enumerate(texts)])
     else:
         formatted_user_prompt = texts[0] if texts else ""
 
-    save_message("discord", "Izzi", "\n".join(texts) if texts else "[Sent Images]")
+    save_message("discord", "Izzi", combined_text if combined_text else "[Sent Images]")
+    if combined_text:
+        asyncio.create_task(extract_facts_background(combined_text))
 
     async with channel.typing():
         reply = await ask_van(formatted_user_prompt, image_bytes_list=images, reply_context=reply_context)
 
-    bubbles = [b.strip() for b in reply.split("---") if b.strip()]
+    # Check if Van wanted to create a Discord channel
+    chan_matches = re.findall(r'\[CREATE_CHANNEL:\s*(text|voice)\s*,\s*([^\]]+)\]', reply, re.IGNORECASE)
+    for c_type, c_name in chan_matches:
+        c_name_clean = c_name.strip().replace(" ", "-").lower()
+        try:
+            if c_type.lower() == "voice":
+                await guild.create_voice_channel(c_name_clean)
+            else:
+                await guild.create_text_channel(c_name_clean)
+        except Exception:
+            pass
+
+    clean_reply = re.sub(r'\[CREATE_CHANNEL:[^\]]+\]', '', reply).strip()
+    bubbles = [b.strip() for b in clean_reply.split("---") if b.strip()]
+
     for b in bubbles:
         async with channel.typing():
             await asyncio.sleep(min(max(len(b) * 0.04, 1.2), 3.5))
@@ -398,7 +468,8 @@ async def spontaneous_checkin(tg_app):
         if chance < 0.35:
             prompt = "Send a short, playful check-in text to Izzi based on her schedule or what she was doing earlier. Keep it casual."
             reply = await ask_van("", context_note=f"[SYSTEM: Spontaneous check-in trigger. {prompt}]")
-            bubbles = [b.strip() for b in reply.split("---") if b.strip()]
+            clean_reply = re.sub(r'\[CREATE_CHANNEL:[^\]]+\]', '', reply).strip()
+            bubbles = [b.strip() for b in clean_reply.split("---") if b.strip()]
             
             for b in bubbles:
                 if TG_USER_ID != 0:
