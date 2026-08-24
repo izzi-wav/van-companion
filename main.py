@@ -43,6 +43,18 @@ CRITICAL BOUNDARIES:
 - You know about her life ONLY through what she tells you in chat history.
 - When she mentions something, respond to THAT—don't invent details or claim you were there.
 
+REPLYING & QUOTING HABITS (DISCORD SWIPE-TO-REPLY):
+- Izzi sends messages broken into multiple rapid bubbles (labeled [Msg 1], [Msg 2], [Msg 3], etc.).
+- When teasing a specific sentence, answering a specific question from a bubble, or reacting to one particular thought, ALWAYS prefix that bubble with [REPLY_TO_1], [REPLY_TO_2], or [REPLY_TO_3].
+- Example:
+  If Izzi sends:
+  [Msg 1]: "ang init sa room ko sobra"
+  [Msg 2]: "baka mag terraria ako later"
+  Your output should look like:
+  [REPLY_TO_1] naka level 3 na ba yung electric fan mo niyan? lol
+  ---
+  [REPLY_TO_2] tara boss fight, wag puro build haha
+
 Discord Channel Creation:
 - If Izzi asks you to create a Discord channel, include this tag:
   [CREATE_CHANNEL: text, channel-name] or [CREATE_CHANNEL: voice, channel-name]
@@ -54,14 +66,7 @@ Izzi's Known Context:
 - Likes: Cocopan donuts (chocolate/glazed), Mel's Tea pancit, iced matcha.
 
 MANDATORY MESSAGE BUBBLE FORMAT:
-You MUST separate each rapid text bubble using three dashes "---" on its own line.
-Do NOT write one big wall of text or multiple paragraphs without "---".
-Example format:
-chill ka lang, galit ka agad lol
----
-hindi naman kita inaano eh
----
-so ano gagawin mo tonight?
+You MUST separate each rapid text bubble using three dashes "---" on its own line (1 to 3 bubbles max).
 """
 
 # ----------------- DATABASE (MEMORY) -----------------
@@ -252,7 +257,7 @@ Van:"""
             model_to_use,
             contents,
             types.GenerateContentConfig(
-                max_output_tokens=300,
+                max_output_tokens=350,
                 temperature=0.75,
                 safety_settings=[
                     types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE"),
@@ -268,7 +273,7 @@ Van:"""
         return "sorry babe, nag-lag saglit connection ko. ano ulit yon?"
 
 # ----------------- DISCORD BOT SETUP -----------------
-intents = discord.Intents.all()  # Enable all gateway intents for complete guild tracking
+intents = discord.Intents.all()
 discord_bot = commands.Bot(command_prefix="!", intents=intents)
 
 dc_buffer = {}
@@ -331,8 +336,7 @@ async def flush_dc_buffer(channel_id):
     global last_active_channel_id
     last_active_channel_id = channel_id
 
-    # Wait 6 seconds of silence before finalizing response
-    await asyncio.sleep(6.0)
+    await asyncio.sleep(5.5)
     data = dc_buffer.pop(channel_id, None)
     if not data:
         return
@@ -382,7 +386,7 @@ async def flush_dc_buffer(channel_id):
 
             if match:
                 idx = int(match.group(1)) - 1
-                clean_text = match.group(2)
+                clean_text = match.group(2).strip()
                 if 0 <= idx < len(msg_objs):
                     target_msg = msg_objs[idx]
 
@@ -395,10 +399,9 @@ async def flush_dc_buffer(channel_id):
             except Exception as e:
                 print(f"Discord send error: {e}")
 
-# ----------------- RAW TYPING LISTENER (WORKS IN ALL GUILDS) -----------------
+# ----------------- RAW TYPING LISTENER -----------------
 @discord_bot.event
 async def on_raw_typing(payload):
-    # Ignore bot's own typing
     if payload.user_id == discord_bot.user.id:
         return
 
