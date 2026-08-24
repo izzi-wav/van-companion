@@ -18,7 +18,7 @@ DISCORD_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 TIMEZONE = pytz.timezone("Asia/Manila")
 
 client = genai.Client(api_key=GEMINI_KEY)
-MODEL_NAME = "gemini-3.6-flash"
+MODEL_NAME = "gemini-3.5-flash-lite"
 MODEL_SMALL = MODEL_NAME
 
 # ----------------- SYSTEM PROMPT -----------------
@@ -126,7 +126,7 @@ def get_all_learned_facts():
         rows = cur.fetchall()
         conn.close()
         if not rows:
-            return "- Izzi is solo creative/tech lead at church (OBS, PTZ, switcher, Canva)\n- Starting salary: 16k gross\n- Likes Cocopan donuts (chocolate/glazed), Mel's Tea pancit, iced matcha\n- Apple Music user (on BFF plan)\n- Electric fan level 3 in room (no AC)"
+            return "- Izzi is solo creative/tech lead at church (OBS, PTZ, switcher, Canva)\n- Starting salary: 16k gross\n- Likes Cocopan donuts (chocolate/glazed), Mel's Tea pancit, iced matcha\n- A[...]
         return "\n".join([f"- {r[0]}" for r in rows])
     except Exception:
         return ""
@@ -139,7 +139,7 @@ def get_recent_learned_facts(limit=12):
         rows = cur.fetchall()
         conn.close()
         if not rows:
-            return "- Izzi is solo creative/tech lead at church (OBS, PTZ, switcher, Canva)\n- Starting salary: 16k gross\n- Likes Cocopan donuts (chocolate/glazed), Mel's Tea pancit, iced matcha\n- Apple Music user (on BFF plan)\n- Electric fan level 3 in room (no AC)"
+            return "- Izzi is solo creative/tech lead at church (OBS, PTZ, switcher, Canva)\n- Starting salary: 16k gross\n- Likes Cocopan donuts (chocolate/glazed), Mel's Tea pancit, iced matcha\n- A[...]
         return "\n".join([f"- {r[0]}" for r in rows[::-1]])
     except Exception:
         return ""
