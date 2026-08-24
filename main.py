@@ -19,8 +19,7 @@ TIMEZONE = pytz.timezone("Asia/Manila")
 
 client = genai.Client(api_key=GEMINI_KEY)
 MODEL_NAME = "gemini-3.6-flash"
-# cheaper model for lightweight tasks (free tier stable during high demand)
-MODEL_SMALL = "gemini-2.0-flash-lite"
+MODEL_SMALL = MODEL_NAME
 
 # ----------------- SYSTEM PROMPT -----------------
 VAN_PROMPT = """
@@ -42,8 +41,8 @@ Replying & Quoting Habits:
 
 Discord Channel Creation:
 - If Izzi asks you to create a Discord channel, include this tag in your text:
-   [CREATE_CHANNEL: text, channel-name] or [CREATE_CHANNEL: voice, channel-name]
-   Example: "done babe! made #food-and-matcha for us [CREATE_CHANNEL: text, food-and-matcha]"
+  [CREATE_CHANNEL: text, channel-name] or [CREATE_CHANNEL: voice, channel-name]
+  Example: "done babe! made #food-and-matcha for us [CREATE_CHANNEL: text, food-and-matcha]"
 
 Izzi's Baseline Context:
 - Solo creative/tech lead at church: handles Canva decks, posters, FB page, and livestream booth (PTZ cameras, Blackmagic switcher, OBS).
@@ -75,7 +74,6 @@ def get_db():
     conn.commit()
     return conn
 
-
 def save_message(source, sender, content):
     try:
         conn = get_db()
@@ -85,8 +83,7 @@ def save_message(source, sender, content):
     except Exception as e:
         print(f"Error saving message: {e}")
 
-
-def get_recent_history(limit=20):
+def get_recent_history(limit=12):
     try:
         conn = get_db()
         cur = conn.cursor()
@@ -96,7 +93,6 @@ def get_recent_history(limit=20):
         return "\n".join([f"{sender}: {content}" for sender, content in rows])
     except Exception:
         return ""
-
 
 def get_today_chat_log():
     try:
@@ -108,7 +104,6 @@ def get_today_chat_log():
         return "\n".join([f"{sender}: {content}" for sender, content in rows])
     except Exception:
         return ""
-
 
 def get_last_message_time():
     try:
@@ -123,7 +118,6 @@ def get_last_message_time():
         pass
     return None
 
-
 def get_all_learned_facts():
     try:
         conn = get_db()
@@ -132,12 +126,11 @@ def get_all_learned_facts():
         rows = cur.fetchall()
         conn.close()
         if not rows:
-            return "- Izzi is solo creative/tech lead at church (OBS, PTZ, switcher, Canva)\n- Starting salary: 16k gross\n- Likes Cocopan donuts (chocolate/glazed), Mel's Tea pancit, iced matcha[...]"
+            return "- Izzi is solo creative/tech lead at church (OBS, PTZ, switcher, Canva)\n- Starting salary: 16k gross\n- Likes Cocopan donuts (chocolate/glazed), Mel's Tea pancit, iced matcha\n- Apple Music user (on BFF plan)\n- Electric fan level 3 in room (no AC)"
         return "\n".join([f"- {r[0]}" for r in rows])
     except Exception:
         return ""
 
-# New: send only the most recent / relevant learned facts to the model to save tokens
 def get_recent_learned_facts(limit=12):
     try:
         conn = get_db()
@@ -145,15 +138,14 @@ def get_recent_learned_facts(limit=12):
         cur.execute("SELECT fact FROM learned_memories ORDER BY id DESC LIMIT ?", (limit,))
         rows = cur.fetchall()
         conn.close()
-        # return oldest->newest within the limited window
+        if not rows:
+            return "- Izzi is solo creative/tech lead at church (OBS, PTZ, switcher, Canva)\n- Starting salary: 16k gross\n- Likes Cocopan donuts (chocolate/glazed), Mel's Tea pancit, iced matcha\n- Apple Music user (on BFF plan)\n- Electric fan level 3 in room (no AC)"
         return "\n".join([f"- {r[0]}" for r in rows[::-1]])
     except Exception:
         return ""
 
-
-# ----------------- Model call helper (with fallback) -----------------
+# ----------------- MODEL CALL HELPER -----------------
 async def generate_with_fallback(model, contents, config):
-    """Attempt generation with `model`. If it fails and `model` != MODEL_NAME, retry with MODEL_NAME."""
     try:
         resp = await asyncio.to_thread(
             client.models.generate_content,
@@ -163,7 +155,7 @@ async def generate_with_fallback(model, contents, config):
         )
         return resp
     except Exception as e:
-        print(f"[MODEL ERROR] model {model} failed: {e}")
+        print(f"[MODEL ERROR] {model} failed: {e}")
         if model != MODEL_NAME:
             try:
                 resp = await asyncio.to_thread(
@@ -172,15 +164,13 @@ async def generate_with_fallback(model, contents, config):
                     contents=contents,
                     config=config
                 )
-                print(f"[MODEL FALLBACK] succeeded with {MODEL_NAME}")
                 return resp
             except Exception as e2:
-                print(f"[MODEL ERROR] fallback {MODEL_NAME} also failed: {e2}")
+                print(f"[MODEL FALLBACK ERROR] {e2}")
                 raise e2
         raise e
 
-
-# ----------------- NIGHTLY DIARY TASK (1 API CALL PER DAY) -----------------
+# ----------------- NIGHTLY DIARY TASK -----------------
 async def nightly_diary_summary():
     chat_log = get_today_chat_log()
     if not chat_log or len(chat_log.strip()) < 50:
@@ -195,7 +185,6 @@ Format: Bullet points starting with "-" (e.g. "- Beat the Wall of Flesh in Terra
 If nothing notable was shared, reply ONLY with "NONE".
 """
     try:
-        # Try smaller model first, fallback handled inside generate_with_fallback
         resp = await generate_with_fallback(
             MODEL_SMALL,
             summary_prompt,
@@ -214,17 +203,12 @@ If nothing notable was shared, reply ONLY with "NONE".
     except Exception as e:
         print(f"[NIGHTLY DIARY ERROR] {e}")
 
-
 # ----------------- GEMINI GENERATION -----------------
 async def ask_van(new_user_text, image_bytes_list=None, reply_context="", context_note="", model=None):
-    """Generate Van's reply. Optional `model` lets callers request a cheaper model for short/background responses.
-    This function will automatically fall back to MODEL_NAME if the requested model is unavailable."""
     model_to_use = model or MODEL_NAME
 
     now_str = datetime.now(TIMEZONE).strftime("%A, %I:%M %p")
-    # reduce recent history tokens by lowering the default number of messages included
     chat_history = get_recent_history(12)
-    # send only a limited number of learned facts to save tokens
     learned_notes = get_recent_learned_facts(12)
     
     quoted_block = f"\n[IZZI QUOTED THIS MESSAGE: \"{reply_context}\"]\n" if reply_context else ""
@@ -249,14 +233,13 @@ Van:"""
             contents.append(types.Part.from_bytes(data=img, mime_type="image/jpeg"))
     contents.append(full_text_prompt)
 
-    # Increased token limit to accommodate full responses
     try:
         resp = await generate_with_fallback(
             model_to_use,
             contents,
             types.GenerateContentConfig(
-                max_output_tokens=500,
-                temperature=0.8,
+                max_output_tokens=300,
+                temperature=0.7,
                 safety_settings=[
                     types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE"),
                     types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_NONE"),
@@ -268,8 +251,7 @@ Van:"""
         return resp.text.strip()
     except Exception as e:
         print(f"[ASK_VAN ERROR] generation failed: {e}")
-        return "sorry babe, i'm having trouble replying right now."
-
+        return "sorry babe, nag-lag saglit connection ko. ano ulit yon?"
 
 # ----------------- DISCORD BOT -----------------
 intents = discord.Intents.default()
@@ -279,12 +261,10 @@ discord_bot = commands.Bot(command_prefix="!", intents=intents)
 dc_buffer = {}
 last_active_channel_id = None
 
-
 @discord_bot.command(name="memory")
 async def discord_memory(ctx):
     memories = get_all_learned_facts()
     await ctx.send(f"📖 **Van's Learned Memories:**\n\n{memories}")
-
 
 @discord_bot.command(name="savediary")
 async def discord_savediary(ctx):
@@ -293,21 +273,18 @@ async def discord_savediary(ctx):
     memories = get_all_learned_facts()
     await ctx.send(f"✅ **Updated Memories:**\n\n{memories}")
 
-
 # ----------------- TOKEN-CONSCIOUS SPONTANEOUS CHECK-IN -----------------
 async def checkin_tick():
     global last_active_channel_id
     if not last_active_channel_id:
         return
 
-    # Check if we chatted recently (if we chatted in the last 3 hours, do NOT waste a call)
     last_msg_time = get_last_message_time()
     if last_msg_time:
         diff_hours = (datetime.utcnow() - last_msg_time).total_seconds() / 3600
         if diff_hours < 3.5:
-            return  # Skip to save tokens!
+            return
 
-    # 40% random chance during check-in windows so it's organic
     if random.random() > 0.40:
         return
 
@@ -317,7 +294,6 @@ async def checkin_tick():
 
     prompt = "Send a short, natural check-in text to Izzi. Keep it casual, playful, or asking what she is playing/working on based on her schedule."
     try:
-        # use smaller/cheaper model for spontaneous background check-ins (fallback handled)
         reply = await ask_van("", context_note=f"[SYSTEM: Spontaneous check-in trigger. {prompt}]", model=MODEL_SMALL)
         clean_reply = re.sub(r'\[CREATE_CHANNEL:[^\]]+\]', '', reply).strip()
         bubbles = [b.strip() for b in clean_reply.split("---") if b.strip()]
@@ -330,23 +306,11 @@ async def checkin_tick():
     except Exception as e:
         print(f"[CHECKIN ERROR] {e}")
 
-
 async def flush_dc_buffer(channel_id):
     global last_active_channel_id
     last_active_channel_id = channel_id
 
-    # Wait 4 seconds, but reset if new messages arrive
-    for _ in range(40):  # 40 x 0.1s = 4 seconds
-        await asyncio.sleep(0.1)
-        
-        # If new messages arrived, this task will be cancelled by on_message
-        # Check if we're still the active task for this channel
-        data = dc_buffer.get(channel_id)
-        if data and data['task'] != asyncio.current_task():
-            # We've been replaced by a newer task, abort silently
-            return
-    
-    # Only pop the buffer if we're still the active task
+    await asyncio.sleep(4.0)
     data = dc_buffer.pop(channel_id, None)
     if not data:
         return
@@ -410,7 +374,6 @@ async def flush_dc_buffer(channel_id):
             except Exception as e:
                 print(f"Discord send error: {e}")
 
-
 @discord_bot.event
 async def on_message(message):
     global last_active_channel_id
@@ -448,29 +411,24 @@ async def on_message(message):
 
     dc_buffer[channel_id]['msg_objects'].append(message)
 
-    # Cancel old task if it exists and hasn't completed
     if dc_buffer[channel_id]['task'] and not dc_buffer[channel_id]['task'].done():
         dc_buffer[channel_id]['task'].cancel()
 
-    # Create new task - this will restart the 4-second timer
     dc_buffer[channel_id]['task'] = asyncio.create_task(flush_dc_buffer(channel_id))
-
 
 # ----------------- MAIN RUNNER -----------------
 async def runner():
     scheduler = AsyncIOScheduler(timezone=TIMEZONE)
-    # Nightly Diary Summary at 11:59 PM Manila Time (1 call/day)
+    # Nightly Diary Summary at 11:59 PM Manila Time
     scheduler.add_job(lambda: asyncio.create_task(nightly_diary_summary()), 'cron', hour=23, minute=59)
-    # Check-in slots at 11:00 AM, 3:30 PM, and 8:30 PM Manila Time (only fires if silent)
+    # Check-in slots at 11:00 AM, 3:30 PM, and 8:30 PM Manila Time
     scheduler.add_job(lambda: asyncio.create_task(checkin_tick()), 'cron', hour='11,15,20', minute=30)
     scheduler.start()
 
     await discord_bot.start(DISCORD_TOKEN)
 
-
 def main():
     asyncio.run(runner())
-
 
 if __name__ == "__main__":
     main()
