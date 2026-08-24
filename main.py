@@ -19,8 +19,8 @@ TIMEZONE = pytz.timezone("Asia/Manila")
 
 client = genai.Client(api_key=GEMINI_KEY)
 MODEL_NAME = "gemini-3.6-flash"
-# cheaper model for lightweight tasks (if available in your account)
-MODEL_SMALL = "gemini-3.6-mini"
+# cheaper model for lightweight tasks (set to the same model you're currently using)
+MODEL_SMALL = MODEL_NAME
 
 # ----------------- SYSTEM PROMPT -----------------
 VAN_PROMPT = """
