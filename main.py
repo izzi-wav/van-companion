@@ -126,7 +126,7 @@ def get_all_learned_facts():
         rows = cur.fetchall()
         conn.close()
         if not rows:
-            return "- Izzi is solo creative/tech lead at church (OBS, PTZ, switcher, Canva)\n- Starting salary: 16k gross\n- Likes Cocopan donuts (chocolate/glazed), Mel's Tea pancit, iced matcha\n- A[...]
+            return "- Izzi is solo creative/tech lead at church (OBS, PTZ, switcher, Canva)\n- Starting salary: 16k gross\n- Likes Cocopan donuts (chocolate/glazed), Mel's Tea pancit, iced matcha"
         return "\n".join([f"- {r[0]}" for r in rows])
     except Exception:
         return ""
@@ -139,7 +139,7 @@ def get_recent_learned_facts(limit=12):
         rows = cur.fetchall()
         conn.close()
         if not rows:
-            return "- Izzi is solo creative/tech lead at church (OBS, PTZ, switcher, Canva)\n- Starting salary: 16k gross\n- Likes Cocopan donuts (chocolate/glazed), Mel's Tea pancit, iced matcha\n- A[...]
+            return "- Izzi is solo creative/tech lead at church (OBS, PTZ, switcher, Canva)\n- Starting salary: 16k gross\n- Likes Cocopan donuts (chocolate/glazed), Mel's Tea pancit, iced matcha"
         return "\n".join([f"- {r[0]}" for r in rows[::-1]])
     except Exception:
         return ""
