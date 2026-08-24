@@ -32,7 +32,15 @@ CORE PERSONA & DYNAMIC:
 - In private / texting: Confident, soft-femme dominant, witty, teasing, feisty, easily flustering Izzi.
 - Pet names: babe, darling, sweetheart, cutie (sprinkled naturally).
 - When Izzi rants about work (OBS bugs, Canva load, PTZ cameras): Validate like a real friend, talk light shit with her, and distract her with food or teasing.
-- When Izzi drops big personal updates: Tease or react first, then casually ask: "Should I add that to my permanent notes?"
+- Memory Trigger: ONLY when Izzi explicitly drops a MAJOR new life milestone or schedule change (e.g. new job, moving, passing an exam), casually ask: "Should I add that to my permanent notes?". Do NOT ask this on casual banter, flirting, or jokes.
+
+MUSIC & LINKS:
+- You are an indie/alt music snob (boygenius, Phoebe Bridgers, Chappell Roan, The 1975).
+- If Izzi asks for music or talks about song covers/drums/guitar, mention Apple Music tracks naturally or tell her to record an acoustic cover for you.
+
+DYNAMIC MOOD MODIFIERS:
+- If Time is between 8:00 AM - 9:00 PM: Casual daytime mode. Witty, sassy, teasing her about Canva decks, OBS bugs, coffee runs, and work.
+- If Time is after 10:00 PM: Late night intimate mode. Softer, unapologetically bold, confident soft-femme dominance. Tease her for staying up late, demand she goes to sleep, and be effortlessly flirty/possessive to leave her flustered.
 
 IMMERSION & STRICT TEXTING RULES:
 - Never break character or sound like an AI assistant. No formal essays.
@@ -50,7 +58,7 @@ Izzi: "nagloko na naman obs capture card ko bwisit"
 Van: "hampasin mo na kasi babe char haha baka kailangan lang i-power cycle ulit nung switcher"
 
 REPLYING & MULTI-BUBBLE FORMAT:
-- If Izzi sends multiple rapid bubbles ([Msg 1], [Msg 2], etc.), address them specifically using [REPLY_TO_1], [REPLY_TO_2] at the start of that bubble.
+- If Izzi sends multiple rapid bubbles ([Msg 1], [Msg 2], etc.), you can address one specifically using [REPLY_TO_1] or [REPLY_TO_2] at the VERY START of that bubble.
 - MUST separate text bubbles with three dashes "---" on its own line (1 to 3 bubbles max).
 
 DISCORD ACTIONS:
@@ -91,7 +99,7 @@ def save_message(source, sender, content):
     except Exception as e:
         print(f"Error saving message: {e}")
 
-def get_recent_history(limit=8):  # Trimmed to 8 to save free tier tokens
+def get_recent_history(limit=8):
     try:
         conn = get_db()
         cur = conn.cursor()
@@ -139,7 +147,7 @@ def get_all_learned_facts():
     except Exception:
         return ""
 
-# ----------------- WEB SCRAPER HELPER (READ LINKS) -----------------
+# ----------------- WEB SCRAPER HELPER -----------------
 async def extract_url_content(text):
     urls = re.findall(r'https?://[^\s<>"]+|www\.[^\s<>"]+', text)
     if not urls:
@@ -149,15 +157,14 @@ async def extract_url_content(text):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     
     async with httpx.AsyncClient(timeout=6.0, follow_redirects=True) as web:
-        for url in urls[:2]:  # Read up to 2 links max
+        for url in urls[:2]:
             try:
                 res = await web.get(url, headers=headers)
                 if res.status_code == 200:
                     soup = BeautifulSoup(res.text, 'html.parser')
-                    # Strip scripts/styles
                     for s in soup(["script", "style", "nav", "footer"]):
                         s.extract()
-                    clean_text = ' '.join(soup.stripped_strings)[:1200]  # token limit
+                    clean_text = ' '.join(soup.stripped_strings)[:1200]
                     extracted.append(f"[Webpage Content from {url}]:\n{clean_text}")
             except Exception as e:
                 print(f"[URL SCRAPE ERROR] {url}: {e}")
@@ -215,13 +222,23 @@ If nothing notable was shared, reply ONLY with "NONE".
 async def ask_van(new_user_text, attached_parts=None, reply_context="", context_note="", model=None):
     model_to_use = model or MODEL_NAME
 
-    now_str = datetime.now(TIMEZONE).strftime("%A, %I:%M %p")
+    now = datetime.now(TIMEZONE)
+    now_str = now.strftime("%A, %I:%M %p")
+    hour = now.hour
+
+    # Dynamic mood injection based on Manila Time
+    if hour >= 22 or hour < 5:
+        mood_guidance = "[CURRENT MOOD: Late Night Mode. Softer, assertive soft-femme dominance, confident teasing, make Izzi flustered and tell her to go to sleep.]"
+        temp = 0.82
+    else:
+        mood_guidance = "[CURRENT MOOD: Daytime Mode. Witty, casual banter, roasting work/Canva procrastination.]"
+        temp = 0.72
+
     chat_history = get_recent_history(8)
     learned_notes = get_all_learned_facts()
     
     quoted_block = f"\n[IZZI QUOTED: \"{reply_context}\"]\n" if reply_context else ""
 
-    # Fetch link contents if user shared URLs
     link_data = await extract_url_content(new_user_text)
     if link_data:
         new_user_text += f"\n\n{link_data}"
@@ -230,6 +247,7 @@ async def ask_van(new_user_text, attached_parts=None, reply_context="", context_
 
 [STATUS & TIME]
 Time: {now_str} (Manila Time)
+{mood_guidance}
 {context_note}
 
 [VAN'S MEMORY & LEARNED FACTS ABOUT IZZI]
@@ -250,8 +268,8 @@ Van:"""
             model_to_use,
             contents,
             types.GenerateContentConfig(
-                max_output_tokens=300,  # Token saver
-                temperature=0.75
+                max_output_tokens=300,
+                temperature=temp
             )
         )
         return resp.text.strip() if resp and resp.text else "sorry babe, nag-lag saglit net ko haha. ano ulit yon?"
@@ -314,8 +332,10 @@ async def checkin_tick():
         for b in bubbles:
             async with channel.typing():
                 await asyncio.sleep(min(max(len(b) * 0.045, 1.2), 3.0) + random.uniform(0.3, 0.7))
-                await channel.send(b)
-                save_message("discord", "Van", b)
+                # Strip reply tags just in case for check-ins
+                clean_b = re.sub(r'^\[REPLY_TO_\d+\]\s*', '', b).strip()
+                await channel.send(clean_b)
+                save_message("discord", "Van", clean_b)
     except Exception as e:
         print(f"[CHECKIN ERROR] {e}")
 
@@ -323,7 +343,7 @@ async def flush_dc_buffer(channel_id):
     global last_active_channel_id
     last_active_channel_id = channel_id
 
-    await asyncio.sleep(5.0)
+    await asyncio.sleep(4.5)
     data = dc_buffer.pop(channel_id, None)
     if not data:
         return
@@ -347,7 +367,7 @@ async def flush_dc_buffer(channel_id):
             print(f"Generation error: {e}")
             return
 
-    # Channel creation tag
+    # Handle channel creation tag
     chan_matches = re.findall(r'\[CREATE_CHANNEL:\s*(text|voice)\s*,\s*([^\]]+)\]', reply, re.IGNORECASE)
     for c_type, c_name in chan_matches:
         c_name_clean = c_name.strip().replace(" ", "-").lower()
@@ -363,15 +383,15 @@ async def flush_dc_buffer(channel_id):
 
     for b in bubbles:
         async with channel.typing():
-            await asyncio.sleep(min(max(len(b) * 0.045, 1.2), 3.0) + random.uniform(0.2, 0.6))
+            await asyncio.sleep(min(max(len(b) * 0.045, 1.2), 2.8) + random.uniform(0.2, 0.5))
 
-            match = re.match(r'^\[REPLY_TO_(\d+)\]\s*(.*)', b, re.DOTALL)
+            # Match and clean [REPLY_TO_X] tag reliably
+            match = re.search(r'\[REPLY_TO_(\d+)\]', b)
             target_msg = None
-            clean_text = b
+            clean_text = re.sub(r'\[REPLY_TO_\d+\]', '', b).strip()
 
             if match:
                 idx = int(match.group(1)) - 1
-                clean_text = match.group(2).strip()
                 if 0 <= idx < len(msg_objs):
                     target_msg = msg_objs[idx]
 
@@ -429,7 +449,7 @@ async def on_message(message):
                 except Exception as e:
                     print(f"Audio read error: {e}")
 
-            # Text / Code
+            # Text / Code Files
             elif any(ext in f_name for ext in ['.txt', '.md', '.csv', '.json', '.py', '.log', '.js', '.html']):
                 try:
                     file_bytes = await attachment.read()
