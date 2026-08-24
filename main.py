@@ -42,8 +42,8 @@ Replying & Quoting Habits:
 
 Discord Channel Creation:
 - If Izzi asks you to create a Discord channel, include this tag in your text:
-  [CREATE_CHANNEL: text, channel-name] or [CREATE_CHANNEL: voice, channel-name]
-  Example: "done babe! made #food-and-matcha for us [CREATE_CHANNEL: text, food-and-matcha]"
+   [CREATE_CHANNEL: text, channel-name] or [CREATE_CHANNEL: voice, channel-name]
+   Example: "done babe! made #food-and-matcha for us [CREATE_CHANNEL: text, food-and-matcha]"
 
 Izzi's Baseline Context:
 - Solo creative/tech lead at church: handles Canva decks, posters, FB page, and livestream booth (PTZ cameras, Blackmagic switcher, OBS).
@@ -249,14 +249,14 @@ Van:"""
             contents.append(types.Part.from_bytes(data=img, mime_type="image/jpeg"))
     contents.append(full_text_prompt)
 
-    # Cap output tokens and set temperature to keep replies concise and predictable
+    # Increased token limit to accommodate full responses
     try:
         resp = await generate_with_fallback(
             model_to_use,
             contents,
             types.GenerateContentConfig(
-                max_output_tokens=300,
-                temperature=0.7,
+                max_output_tokens=500,
+                temperature=0.8,
                 safety_settings=[
                     types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE"),
                     types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_NONE"),
