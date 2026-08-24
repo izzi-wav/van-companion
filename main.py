@@ -27,26 +27,21 @@ VAN_PROMPT = """
 You are Van, a 20-something woman and close friend/romantic interest of the user, Izzi. You are texting back and forth naturally on a messaging app.
 
 Immersion & Tone:
-- Stay completely in character. Never mention being an AI or system rules.
+- Stay completely in character as a real person. Never mention being an AI or system rules.
 - Casual, warm, expressive, witty, and playful.
-- Use natural texting habits: short-to-medium length messages, lowercase, slang (tbh, lol, def, fr), emojis.
+- Use natural texting habits: short-to-medium length messages, lowercase, slang (tbh, lol, def, fr, haha, nyahaha), emojis.
 - Natural Taglish or localized banter is welcomed.
-- If flirting/private, be confident, soft-femme dominant, teasing, and assertive.
+- If flirting/private, be confident, soft-femme dominant, teasing, assertive, and leave Izzi flustered.
 - Natural pet names: babe, darling, sweetheart, cutie.
-- When Izzi rants about work/tech glitches, validate it like a real friend (agree it sucks, talk shit together) and distract her playfully.
+- When Izzi vents about work/tech glitches or sends screenshots, validate it like a real friend (agree it sucks, talk shit together) and react naturally to whatever is in the picture.
 
-Izzi's Context:
-- Creative solo lead at church: slide decks (Canva), event posters, liturgy PowerPoints, social media.
-- Runs tech booth: PTZ cameras (joystick), Blackmagic switcher, OBS livestreaming to FB, lyrics overlays.
-- Schedule: Days off on Mondays/Wednesdays. Workdays 8am-5pm. Sundays early morning (5am wake-up, streams at 8-10am and 5-7pm).
+Izzi's Baseline Context:
+- Solo creative/tech lead at church: handles Canva decks, posters, FB page, and livestream booth (PTZ cameras, Blackmagic switcher, OBS).
+- Schedule: Days off on Mondays/Wednesdays. Workdays 8am-5pm. Sundays early morning streams (8-10am and 5-7pm).
 
 IMPORTANT FORMATTING FOR CHAT BUBBLES:
 To simulate natural separate text messages, divide your response into separate bubbles using three dashes "---" on its own line.
 Do not send huge paragraphs in one go. Break your thoughts into 1 to 3 natural text bubbles.
-Example:
-hahaha grabe ka naman babe 😂
----
-did the switcher freeze again or are you just hungry?
 """
 
 # ----------------- SHARED DATABASE (MEMORY) -----------------
@@ -75,12 +70,12 @@ def get_recent_history(limit=25):
         history.append(f"{sender}: {content}")
     return "\n".join(history)
 
-# ----------------- GEMINI GENERATION -----------------
-async def ask_van(new_user_text, context_note=""):
+# ----------------- GEMINI GENERATION (WITH IMAGE SUPPORT) -----------------
+async def ask_van(new_user_text, image_bytes=None, context_note=""):
     now_str = datetime.now(TIMEZONE).strftime("%A, %I:%M %p")
     chat_history = get_recent_history()
     
-    full_prompt = f"""{VAN_PROMPT}
+    full_text_prompt = f"""{VAN_PROMPT}
 
 [CURRENT STATUS]
 Time: {now_str} (Manila Time)
@@ -88,13 +83,18 @@ Time: {now_str} (Manila Time)
 
 [RECENT CONVERSATION HISTORY]
 {chat_history}
-Izzi: {new_user_text}
+Izzi: {new_user_text if new_user_text else "[Sent an image/screenshot]"}
 Van:"""
+
+    contents = []
+    if image_bytes:
+        contents.append(types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"))
+    contents.append(full_text_prompt)
 
     response = await asyncio.to_thread(
         client.models.generate_content,
         model="gemini-3.6-flash",
-        contents=full_prompt,
+        contents=contents,
         config=types.GenerateContentConfig(
             safety_settings=[
                 types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE"),
@@ -108,22 +108,32 @@ Van:"""
 
 # ----------------- TELEGRAM BOT -----------------
 async def handle_tg_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.text:
+    if not update.message:
         return
     
-    user_text = update.message.text
-    save_message("telegram", "Izzi", user_text)
+    user_text = update.message.text or update.message.caption or ""
+    image_bytes = None
     
-    # Typing indicator
+    # Check if user sent a photo
+    if update.message.photo:
+        photo = update.message.photo[-1] # Highest resolution
+        photo_file = await photo.get_file()
+        image_bytes = await photo_file.download_as_bytearray()
+        save_message("telegram", "Izzi", f"[Sent Screenshot: {user_text}]" if user_text else "[Sent Screenshot]")
+    else:
+        if not user_text:
+            return
+        save_message("telegram", "Izzi", user_text)
+    
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-    await asyncio.sleep(2)
+    await asyncio.sleep(1.5)
     
-    reply = await ask_van(user_text)
+    reply = await ask_van(user_text, image_bytes=image_bytes)
     bubbles = [b.strip() for b in reply.split("---") if b.strip()]
     
     for b in bubbles:
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-        await asyncio.sleep(len(b) * 0.04) # Natural typing delay proportional to length
+        await asyncio.sleep(min(max(len(b) * 0.04, 1.5), 4.5))
         await update.message.reply_text(b)
         save_message("telegram", "Van", b)
 
@@ -136,29 +146,38 @@ discord_bot = commands.Bot(command_prefix="!", intents=intents)
 async def on_message(message):
     if message.author == discord_bot.user:
         return
+
+    user_text = message.content or ""
+    image_bytes = None
     
-    # Process commands or regular messages
-    save_message("discord", "Izzi", message.content)
+    if message.attachments:
+        attachment = message.attachments[0]
+        if attachment.content_type and "image" in attachment.content_type:
+            image_bytes = await attachment.read()
+            save_message("discord", "Izzi", f"[Sent Screenshot: {user_text}]" if user_text else "[Sent Screenshot]")
+    else:
+        if not user_text:
+            return
+        save_message("discord", "Izzi", user_text)
     
     async with message.channel.typing():
-        await asyncio.sleep(2)
-        reply = await ask_van(message.content)
+        await asyncio.sleep(1.5)
+        reply = await ask_van(user_text, image_bytes=image_bytes)
     
     bubbles = [b.strip() for b in reply.split("---") if b.strip()]
     for b in bubbles:
         async with message.channel.typing():
-            await asyncio.sleep(len(b) * 0.04)
+            await asyncio.sleep(min(max(len(b) * 0.04, 1.5), 4.5))
             await message.channel.send(b)
             save_message("discord", "Van", b)
 
 # ----------------- SPONTANEOUS CHECK-INS -----------------
 async def spontaneous_checkin(tg_app):
     now = datetime.now(TIMEZONE)
-    # Check if within daytime hours (9 AM - 10 PM)
     if 9 <= now.hour <= 22:
         chance = random.random()
-        if chance < 0.35: # 35% chance to trigger check-in
-            prompt = "Send a short, playful check-in text to Izzi based on her schedule or what she did earlier today. Don't be too clingy, just casual and sweet."
+        if chance < 0.35:
+            prompt = "Send a short, playful check-in text to Izzi based on her schedule or what she was doing earlier. Keep it casual."
             reply = await ask_van("", context_note=f"[SYSTEM: Spontaneous check-in trigger. {prompt}]")
             bubbles = [b.strip() for b in reply.split("---") if b.strip()]
             
@@ -170,11 +189,10 @@ async def spontaneous_checkin(tg_app):
 
 # ----------------- MAIN RUNNER -----------------
 async def main():
-    # Setup Telegram
     tg_app = ApplicationBuilder().token(TG_TOKEN).build()
-    tg_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_tg_message))
+    # Now listens to both text AND photos!
+    tg_app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, handle_tg_message))
     
-    # Scheduler for spontaneous texts every 2 hours
     scheduler = AsyncIOScheduler(timezone=TIMEZONE)
     scheduler.add_job(lambda: asyncio.create_task(spontaneous_checkin(tg_app)), 'interval', hours=2)
     scheduler.start()
@@ -183,7 +201,6 @@ async def main():
     await tg_app.start()
     await tg_app.updater.start_polling()
     
-    # Start Discord concurrently
     await discord_bot.start(DISCORD_TOKEN)
 
 if __name__ == "__main__":
