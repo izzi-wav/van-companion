@@ -97,13 +97,25 @@ def get_today_chat_log():
     try:
         conn = get_db()
         cur = conn.cursor()
-        # Fetch messages from the last 24 hours
         cur.execute("SELECT sender, content FROM messages WHERE timestamp >= datetime('now', '-1 day') ORDER BY id ASC")
         rows = cur.fetchall()
         conn.close()
         return "\n".join([f"{sender}: {content}" for sender, content in rows])
     except Exception:
         return ""
+
+def get_last_message_time():
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT timestamp FROM messages ORDER BY id DESC LIMIT 1")
+        row = cur.fetchone()
+        conn.close()
+        if row:
+            return datetime.strptime(row[0], "%Y-%m-%d %H:%M:%S")
+    except Exception:
+        pass
+    return None
 
 def get_all_learned_facts():
     try:
@@ -147,12 +159,12 @@ If nothing notable was shared, reply ONLY with "NONE".
                     conn.execute("INSERT OR IGNORE INTO learned_memories (fact) VALUES (?)", (clean_fact,))
             conn.commit()
             conn.close()
-            print(f"[NIGHTLY DIARY] Successfully saved new memories: {text}")
+            print(f"[NIGHTLY DIARY] Successfully saved: {text}")
     except Exception as e:
         print(f"[NIGHTLY DIARY ERROR] {e}")
 
 # ----------------- GEMINI GENERATION -----------------
-async def ask_van(new_user_text, image_bytes_list=None, reply_context=""):
+async def ask_van(new_user_text, image_bytes_list=None, reply_context="", context_note=""):
     now_str = datetime.now(TIMEZONE).strftime("%A, %I:%M %p")
     chat_history = get_recent_history()
     learned_notes = get_all_learned_facts()
@@ -163,6 +175,7 @@ async def ask_van(new_user_text, image_bytes_list=None, reply_context=""):
 
 [CURRENT STATUS]
 Time: {now_str} (Manila Time)
+{context_note}
 
 [VAN'S MEMORY & LEARNED FACTS ABOUT IZZI]
 {learned_notes}
@@ -199,13 +212,13 @@ intents.message_content = True
 discord_bot = commands.Bot(command_prefix="!", intents=intents)
 
 dc_buffer = {}
+last_active_channel_id = None
 
 @discord_bot.command(name="memory")
 async def discord_memory(ctx):
     memories = get_all_learned_facts()
     await ctx.send(f"📖 **Van's Learned Memories:**\n\n{memories}")
 
-# Command to manually test diary entry extraction anytime
 @discord_bot.command(name="savediary")
 async def discord_savediary(ctx):
     await ctx.send("📝 Writing today's diary entry into permanent memory...")
@@ -213,7 +226,45 @@ async def discord_savediary(ctx):
     memories = get_all_learned_facts()
     await ctx.send(f"✅ **Updated Memories:**\n\n{memories}")
 
+# ----------------- TOKEN-CONSCIOUS SPONTANEOUS CHECK-IN -----------------
+async def checkin_tick():
+    global last_active_channel_id
+    if not last_active_channel_id:
+        return
+
+    # Check if we chatted recently (if we chatted in the last 3 hours, do NOT waste a call)
+    last_msg_time = get_last_message_time()
+    if last_msg_time:
+        diff_hours = (datetime.utcnow() - last_msg_time).total_seconds() / 3600
+        if diff_hours < 3.5:
+            return  # Skip to save tokens!
+
+    # 40% random chance during check-in windows so it's organic
+    if random.random() > 0.40:
+        return
+
+    channel = discord_bot.get_channel(last_active_channel_id)
+    if not channel:
+        return
+
+    prompt = "Send a short, natural check-in text to Izzi. Keep it casual, playful, or asking what she is playing/working on based on her schedule."
+    try:
+        reply = await ask_van("", context_note=f"[SYSTEM: Spontaneous check-in trigger. {prompt}]")
+        clean_reply = re.sub(r'\[CREATE_CHANNEL:[^\]]+\]', '', reply).strip()
+        bubbles = [b.strip() for b in clean_reply.split("---") if b.strip()]
+
+        for b in bubbles:
+            async with channel.typing():
+                await asyncio.sleep(min(max(len(b) * 0.04, 1.2), 3.0))
+                await channel.send(b)
+                save_message("discord", "Van", b)
+    except Exception as e:
+        print(f"[CHECKIN ERROR] {e}")
+
 async def flush_dc_buffer(channel_id):
+    global last_active_channel_id
+    last_active_channel_id = channel_id
+
     await asyncio.sleep(4.0)
     data = dc_buffer.pop(channel_id, None)
     if not data:
@@ -280,8 +331,11 @@ async def flush_dc_buffer(channel_id):
 
 @discord_bot.event
 async def on_message(message):
+    global last_active_channel_id
     if message.author == discord_bot.user:
         return
+
+    last_active_channel_id = message.channel.id
 
     if message.content.startswith("!"):
         await discord_bot.process_commands(message)
@@ -319,9 +373,11 @@ async def on_message(message):
 
 # ----------------- MAIN RUNNER -----------------
 async def runner():
-    # Setup scheduler for 11:59 PM Manila Time
     scheduler = AsyncIOScheduler(timezone=TIMEZONE)
+    # Nightly Diary Summary at 11:59 PM Manila Time (1 call/day)
     scheduler.add_job(lambda: asyncio.create_task(nightly_diary_summary()), 'cron', hour=23, minute=59)
+    # Check-in slots at 11:00 AM, 3:30 PM, and 8:30 PM Manila Time (only fires if silent)
+    scheduler.add_job(lambda: asyncio.create_task(checkin_tick()), 'cron', hour='11,15,20', minute=30)
     scheduler.start()
 
     await discord_bot.start(DISCORD_TOKEN)
