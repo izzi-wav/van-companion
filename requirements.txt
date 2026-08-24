@@ -1,3 +1,4 @@
 google-genai
 discord.py
 pytz
+apscheduler
