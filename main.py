@@ -268,10 +268,7 @@ Van:"""
         return "sorry babe, nag-lag saglit connection ko. ano ulit yon?"
 
 # ----------------- DISCORD BOT SETUP -----------------
-intents = discord.Intents.default()
-intents.message_content = True
-intents.typing = True
-
+intents = discord.Intents.all()  # Enable all gateway intents for complete guild tracking
 discord_bot = commands.Bot(command_prefix="!", intents=intents)
 
 dc_buffer = {}
@@ -292,11 +289,9 @@ async def discord_savediary(ctx):
 # ----------------- SPLIT HELPER (BUBBLE PARSER) -----------------
 def parse_reply_bubbles(raw_text):
     clean = re.sub(r'\[CREATE_CHANNEL:[^\]]+\]', '', raw_text).strip()
-    # Check if "---" was used
     if "---" in clean:
         bubbles = [b.strip() for b in clean.split("---") if b.strip()]
     else:
-        # Fallback: split on double newlines if model forgot '---'
         bubbles = [b.strip() for b in clean.split("\n\n") if b.strip()]
     return bubbles if bubbles else [clean]
 
@@ -336,7 +331,8 @@ async def flush_dc_buffer(channel_id):
     global last_active_channel_id
     last_active_channel_id = channel_id
 
-    await asyncio.sleep(5.5)
+    # Wait 6 seconds of silence before finalizing response
+    await asyncio.sleep(6.0)
     data = dc_buffer.pop(channel_id, None)
     if not data:
         return
@@ -399,15 +395,17 @@ async def flush_dc_buffer(channel_id):
             except Exception as e:
                 print(f"Discord send error: {e}")
 
-# ----------------- TYPING & MESSAGE LISTENERS -----------------
+# ----------------- RAW TYPING LISTENER (WORKS IN ALL GUILDS) -----------------
 @discord_bot.event
-async def on_typing(channel, user, when):
-    if user == discord_bot.user:
+async def on_raw_typing(payload):
+    # Ignore bot's own typing
+    if payload.user_id == discord_bot.user.id:
         return
 
-    if channel.id in dc_buffer and dc_buffer[channel.id]['task'] and not dc_buffer[channel.id]['task'].done():
-        dc_buffer[channel.id]['task'].cancel()
-        dc_buffer[channel.id]['task'] = asyncio.create_task(flush_dc_buffer(channel.id))
+    channel_id = payload.channel_id
+    if channel_id in dc_buffer and dc_buffer[channel_id]['task'] and not dc_buffer[channel_id]['task'].done():
+        dc_buffer[channel_id]['task'].cancel()
+        dc_buffer[channel_id]['task'] = asyncio.create_task(flush_dc_buffer(channel_id))
 
 @discord_bot.event
 async def on_message(message):
