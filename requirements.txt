@@ -2,3 +2,5 @@ google-genai
 discord.py
 pytz
 apscheduler
+beautifulsoup4
+httpx
