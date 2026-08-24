@@ -66,7 +66,10 @@ so ano gagawin mo tonight?
 
 # ----------------- DATABASE (MEMORY) -----------------
 def get_db():
-    conn = sqlite3.connect("van_memory.db", check_same_thread=False)
+    os.makedirs("/app/data", exist_ok=True)
+    db_path = "/app/data/van_memory.db" if os.path.exists("/app/data") else "van_memory.db"
+    
+    conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.execute("""
     CREATE TABLE IF NOT EXISTS messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
