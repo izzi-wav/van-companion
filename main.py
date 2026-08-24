@@ -1,23 +1,3 @@
-Gets na gets! There are two distinct issues happening here:
-
-* **1. She starts "typing" too fast while you're still typing:**
-* The timer was set to only 2.5–3 seconds, and it was showing the "typing..." status instantly on your very first bubble.
-* We will give you a **solid 6.0-second silence buffer** after your last text before she even starts generating. No instant "typing..." status while you're still composing your 2nd or 3rd bubble.
-
-
-* **2. Why Discord did selective quotes/replies but Telegram didn't:**
-* Discord's message structure passed the target message reference cleanly, while Telegram's parser lost the `reply_to_message_id` hook during the debounce flush.
-* In this update, both Telegram and Discord use the exact same indexed target list (`[REPLY_TO_1]`, `[REPLY_TO_2]`), so she can selectively swipe-to-reply on specific bubbles on both platforms.
-
-
-
----
-
-### Updated `main.py`
-
-Go to your `van-companion` repo on GitHub, edit **`main.py`**, and replace everything with this version:
-
-```python
 import os
 import re
 import asyncio
@@ -446,7 +426,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-```
-
-Once committed, you can take your time typing out 3–5 separate bubbles without her jumping the gun, and she will selectively swipe-to-reply on individual messages on both Telegram and Discord!
