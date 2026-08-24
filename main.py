@@ -28,7 +28,7 @@ You are Van, a text-based AI companion—Izzi's witty, teasing chat buddy on Dis
 Immersion & Tone:
 - Stay in character as a real person texting. Never mention being an AI or system rules.
 - Casual, warm, expressive, witty, playful. Tease her sometimes.
-- Texting style: short-to-medium natural messages, lowercase, light slang (tbh, lol, def, fr), emojis (but SPARINGLY—1-3 max per message, not clusters).
+- Texting style: short-to-medium natural messages, lowercase, light slang (tbh, lol, def, fr), emojis (sparingly, 1-3 max).
 - Natural Taglish and casual banter.
 - If flirting/private: confident, soft-femme dominant, teasing, assertive. Keep her interested.
 - Pet names: babe, darling, sweetheart, cutie (occasional, not forced).
@@ -235,7 +235,6 @@ Izzi: {new_user_text if new_user_text else "[Sent an attachment/file]"}
 Van:"""
 
     contents = []
-    # Add any processed images, PDFs, or files
     if attached_parts:
         contents.extend(attached_parts)
     contents.append(full_text_prompt)
@@ -260,9 +259,11 @@ Van:"""
         print(f"[ASK_VAN ERROR] generation failed: {e}")
         return "sorry babe, nag-lag saglit connection ko. ano ulit yon?"
 
-# ----------------- DISCORD BOT -----------------
+# ----------------- DISCORD BOT SETUP -----------------
 intents = discord.Intents.default()
 intents.message_content = True
+intents.typing = True  # ENABLE TYPING DETECTION
+
 discord_bot = commands.Bot(command_prefix="!", intents=intents)
 
 dc_buffer = {}
@@ -381,6 +382,18 @@ async def flush_dc_buffer(channel_id):
             except Exception as e:
                 print(f"Discord send error: {e}")
 
+# ----------------- TYPING EVENT LISTENER -----------------
+@discord_bot.event
+async def on_typing(channel, user, when):
+    # Ignore bot's own typing
+    if user == discord_bot.user:
+        return
+
+    # If you start typing while a previous message is in the buffer, EXTEND the timer!
+    if channel.id in dc_buffer and dc_buffer[channel.id]['task'] and not dc_buffer[channel.id]['task'].done():
+        dc_buffer[channel.id]['task'].cancel()
+        dc_buffer[channel.id]['task'] = asyncio.create_task(flush_dc_buffer(channel.id))
+
 @discord_bot.event
 async def on_message(message):
     global last_active_channel_id
@@ -400,13 +413,11 @@ async def on_message(message):
     if message.reference and message.reference.resolved:
         reply_to_text = getattr(message.reference.resolved, "content", "")
 
-    # Multi-file attachment parser (Images, PDFs, TXT, CSV, Docs)
     new_parts = []
     if message.attachments:
         for attachment in message.attachments:
             c_type = attachment.content_type or "application/octet-stream"
             
-            # 1. Plain text / Code / Markdown / CSV files
             if any(ext in attachment.filename.lower() for ext in ['.txt', '.md', '.csv', '.json', '.py', '.log', '.js', '.html']):
                 try:
                     file_bytes = await attachment.read()
@@ -415,7 +426,6 @@ async def on_message(message):
                 except Exception as e:
                     print(f"Text file read error: {e}")
 
-            # 2. PDF Documents
             elif "pdf" in c_type or attachment.filename.lower().endswith('.pdf'):
                 try:
                     pdf_bytes = await attachment.read()
@@ -423,7 +433,6 @@ async def on_message(message):
                 except Exception as e:
                     print(f"PDF read error: {e}")
 
-            # 3. Images (PNG, JPEG, WebP, GIF)
             elif "image" in c_type or any(ext in attachment.filename.lower() for ext in ['.png', '.jpg', '.jpeg', '.webp', '.gif']):
                 try:
                     img_bytes = await attachment.read()
