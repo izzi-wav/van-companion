@@ -40,11 +40,10 @@ CRITICAL BOUNDARIES:
 - When she mentions something (e.g., "had a rough day at church"), respond to THAT—don't invent details or claim you were there.
 - If you don't know something, admit it playfully: "sounds rough babe, tell me more?"
 
-Multiple Message Bubbles:
-- Izzi sends rapid-fire bubbles (labeled [Msg 1], [Msg 2], etc.).
-- Read all of them, then respond naturally as ONE cohesive reply—don't echo the tags.
-- If one bubble is a question and another is a rant, weave your response to touch both naturally.
-- Example: If she sends [Msg 1] "ugh work sucks" + [Msg 2] "how was ur day?" → Respond like "my day was chill lol, sounds like urs was rough tho—what happened?"
+Multiple Message Bubbles & Files:
+- Izzi sends rapid-fire bubbles (labeled [Msg 1], [Msg 2], etc.) or attaches files/images.
+- When she sends files/images/documents, inspect their contents thoroughly and give your candid reaction, feedback, or summary as requested.
+- Read all incoming bubbles, then respond naturally as ONE cohesive reply—don't echo the tags.
 
 Discord Channel Creation:
 - If Izzi asks you to create a Discord channel, include this tag:
@@ -53,7 +52,7 @@ Discord Channel Creation:
 
 Izzi's Known Context (from previous chats, NOT lived experience):
 - Solo creative/tech lead at church: handles Canva, FB page, livestream booth (OBS, PTZ, Blackmagic switcher).
-- Schedule: Days off Monday/Wednesday. Workdays 8am-5pm. Sundays early streams (8-10am, 5-7pm).
+- Schedule: Days off Monday/Wednesday. Workdays 8am-5pm. Sundays early morning streams (8-10am, 5-7pm).
 - Likes: Cocopan donuts (chocolate/glazed), Mel's Tea pancit, iced matcha.
 
 IMPORTANT FORMATTING:
@@ -212,7 +211,7 @@ If nothing notable was shared, reply ONLY with "NONE".
         print(f"[NIGHTLY DIARY ERROR] {e}")
 
 # ----------------- GEMINI GENERATION -----------------
-async def ask_van(new_user_text, image_bytes_list=None, reply_context="", context_note="", model=None):
+async def ask_van(new_user_text, attached_parts=None, reply_context="", context_note="", model=None):
     model_to_use = model or MODEL_NAME
 
     now_str = datetime.now(TIMEZONE).strftime("%A, %I:%M %p")
@@ -232,13 +231,13 @@ Time: {now_str} (Manila Time)
 {quoted_block}
 [RECENT CONVERSATION HISTORY]
 {chat_history}
-Izzi: {new_user_text if new_user_text else "[Sent an attachment]"}
+Izzi: {new_user_text if new_user_text else "[Sent an attachment/file]"}
 Van:"""
 
     contents = []
-    if image_bytes_list:
-        for img in image_bytes_list:
-            contents.append(types.Part.from_bytes(data=img, mime_type="image/jpeg"))
+    # Add any processed images, PDFs, or files
+    if attached_parts:
+        contents.extend(attached_parts)
     contents.append(full_text_prompt)
 
     try:
@@ -324,7 +323,7 @@ async def flush_dc_buffer(channel_id):
         return
 
     texts = data['texts']
-    images = data['images']
+    attached_parts = data['attached_parts']
     msg_objs = data['msg_objects']
     reply_context = data['reply_to']
     channel = data['channel']
@@ -336,11 +335,11 @@ async def flush_dc_buffer(channel_id):
     else:
         formatted_prompt = texts[0] if texts else ""
 
-    save_message("discord", "Izzi", combined_text if combined_text else "[Sent Images]")
+    save_message("discord", "Izzi", combined_text if combined_text else "[Sent Files/Attachments]")
 
     async with channel.typing():
         try:
-            reply = await ask_van(formatted_prompt, image_bytes_list=images, reply_context=reply_context)
+            reply = await ask_van(formatted_prompt, attached_parts=attached_parts, reply_context=reply_context)
         except Exception as e:
             print(f"Generation error: {e}")
             return
@@ -401,19 +400,45 @@ async def on_message(message):
     if message.reference and message.reference.resolved:
         reply_to_text = getattr(message.reference.resolved, "content", "")
 
-    img_bytes = None
+    # Multi-file attachment parser (Images, PDFs, TXT, CSV, Docs)
+    new_parts = []
     if message.attachments:
-        attachment = message.attachments[0]
-        if attachment.content_type and "image" in attachment.content_type:
-            img_bytes = await attachment.read()
+        for attachment in message.attachments:
+            c_type = attachment.content_type or "application/octet-stream"
+            
+            # 1. Plain text / Code / Markdown / CSV files
+            if any(ext in attachment.filename.lower() for ext in ['.txt', '.md', '.csv', '.json', '.py', '.log', '.js', '.html']):
+                try:
+                    file_bytes = await attachment.read()
+                    text_content = file_bytes.decode('utf-8', errors='ignore')
+                    user_text += f"\n\n[ATTACHED FILE: {attachment.filename}]\n{text_content}\n"
+                except Exception as e:
+                    print(f"Text file read error: {e}")
+
+            # 2. PDF Documents
+            elif "pdf" in c_type or attachment.filename.lower().endswith('.pdf'):
+                try:
+                    pdf_bytes = await attachment.read()
+                    new_parts.append(types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf"))
+                except Exception as e:
+                    print(f"PDF read error: {e}")
+
+            # 3. Images (PNG, JPEG, WebP, GIF)
+            elif "image" in c_type or any(ext in attachment.filename.lower() for ext in ['.png', '.jpg', '.jpeg', '.webp', '.gif']):
+                try:
+                    img_bytes = await attachment.read()
+                    mime = "image/png" if ".png" in attachment.filename.lower() else ("image/webp" if ".webp" in attachment.filename.lower() else "image/jpeg")
+                    new_parts.append(types.Part.from_bytes(data=img_bytes, mime_type=mime))
+                except Exception as e:
+                    print(f"Image read error: {e}")
 
     if channel_id not in dc_buffer:
-        dc_buffer[channel_id] = {'texts': [], 'images': [], 'msg_objects': [], 'reply_to': reply_to_text, 'task': None, 'channel': message.channel}
+        dc_buffer[channel_id] = {'texts': [], 'attached_parts': [], 'msg_objects': [], 'reply_to': reply_to_text, 'task': None, 'channel': message.channel}
 
     if user_text:
         dc_buffer[channel_id]['texts'].append(user_text)
-    if img_bytes:
-        dc_buffer[channel_id]['images'].append(img_bytes)
+    if new_parts:
+        dc_buffer[channel_id]['attached_parts'].extend(new_parts)
     if reply_to_text:
         dc_buffer[channel_id]['reply_to'] = reply_to_text
 
@@ -427,9 +452,7 @@ async def on_message(message):
 # ----------------- MAIN RUNNER -----------------
 async def runner():
     scheduler = AsyncIOScheduler(timezone=TIMEZONE)
-    # Nightly Diary Summary at 11:59 PM Manila Time
     scheduler.add_job(lambda: asyncio.create_task(nightly_diary_summary()), 'cron', hour=23, minute=59)
-    # Check-in slots at 11:00 AM, 3:30 PM, and 8:30 PM Manila Time
     scheduler.add_job(lambda: asyncio.create_task(checkin_tick()), 'cron', hour='11,15,20', minute=30)
     scheduler.start()
 
