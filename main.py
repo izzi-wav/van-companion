@@ -17,7 +17,7 @@ DISCORD_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 TIMEZONE = pytz.timezone("Asia/Manila")
 
 client = genai.Client(api_key=GEMINI_KEY)
-MODEL_NAME = "gemini-3.6-flash"
+MODEL_NAME = "gemini-2.0-flash"
 
 # ----------------- SYSTEM PROMPT -----------------
 VAN_PROMPT = """
@@ -106,8 +106,7 @@ def get_all_learned_facts():
         return ""
 
 async def extract_facts_background(user_text):
-    # Only run extractor on longer, substantive texts to save API calls
-    if len(user_text.strip()) < 25:
+    if len(user_text.strip()) < 30:
         return
     extract_prompt = f"""
 Analyze this text from Izzi: "{user_text}"
