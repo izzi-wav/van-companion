@@ -8,25 +8,19 @@ import pytz
 
 import discord
 from discord.ext import commands
-
-from telegram import Update
-from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, CommandHandler, filters
 from google import genai
 from google.genai import types
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # ----------------- CONFIG & SECRETS -----------------
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
-TG_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TG_USER_ID = int(os.getenv("TELEGRAM_USER_ID", "0"))
 DISCORD_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 TIMEZONE = pytz.timezone("Asia/Manila")
 
 client = genai.Client(api_key=GEMINI_KEY)
 
-# ----------------- CLEAN SYSTEM PROMPT -----------------
+# ----------------- SYSTEM PROMPT -----------------
 VAN_PROMPT = """
-You are Van, a 20-something woman and close friend/romantic interest of the user, Izzi. You are texting back and forth naturally on a messaging app.
+You are Van, a 20-something woman and close friend/romantic interest of the user, Izzi. You are texting back and forth naturally on Discord.
 
 Immersion & Tone:
 - Stay completely in character as a real person. Never mention being an AI, system rules, or citations.
@@ -55,7 +49,7 @@ IMPORTANT FORMATTING:
 Divide your response into separate natural text bubbles using three dashes "---" on its own line (1 to 3 bubbles max).
 """
 
-# ----------------- SHARED DATABASE (MEMORY) -----------------
+# ----------------- DATABASE (MEMORY & SELF-LEARNING) -----------------
 def get_db():
     conn = sqlite3.connect("van_memory.db", check_same_thread=False)
     conn.execute("""
@@ -136,7 +130,7 @@ Reply with ONLY the statement or "NONE".
         pass
 
 # ----------------- GEMINI GENERATION -----------------
-async def ask_van(new_user_text, image_bytes_list=None, reply_context="", context_note=""):
+async def ask_van(new_user_text, image_bytes_list=None, reply_context=""):
     now_str = datetime.now(TIMEZONE).strftime("%A, %I:%M %p")
     chat_history = get_recent_history()
     learned_notes = get_all_learned_facts()
@@ -147,7 +141,6 @@ async def ask_van(new_user_text, image_bytes_list=None, reply_context="", contex
 
 [CURRENT STATUS]
 Time: {now_str} (Manila Time)
-{context_note}
 
 [VAN'S MEMORY & LEARNED FACTS ABOUT IZZI]
 {learned_notes}
@@ -163,131 +156,27 @@ Van:"""
             contents.append(types.Part.from_bytes(data=img, mime_type="image/jpeg"))
     contents.append(full_text_prompt)
 
-    try:
-        response = await asyncio.to_thread(
-            client.models.generate_content,
-            model="gemini-3.6-flash",
-            contents=contents,
-            config=types.GenerateContentConfig(
-                safety_settings=[
-                    types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE"),
-                    types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_NONE"),
-                    types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="BLOCK_NONE"),
-                    types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_NONE"),
-                ]
-            )
+    response = await asyncio.to_thread(
+        client.models.generate_content,
+        model="gemini-3.6-flash",
+        contents=contents,
+        config=types.GenerateContentConfig(
+            safety_settings=[
+                types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE"),
+                types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_NONE"),
+                types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="BLOCK_NONE"),
+                types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_NONE"),
+            ]
         )
-        if response.text:
-            return response.text.strip()
-    except Exception as e:
-        print(f"Gemini error: {e}")
-    
-    return "ano ulit sabi mo babe? haha nag-lag saglit phone ko 😂"
-
-# ----------------- DEBOUNCE MESSAGE BUFFERS -----------------
-tg_buffer = {}
-dc_buffer = {}
-
-# ----------------- TELEGRAM BOT -----------------
-async def handle_tg_memory(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    memories = get_all_learned_facts()
-    await update.message.reply_text(f"📖 **Van's Learned Memories:**\n\n{memories}")
-
-async def flush_tg_buffer(chat_id, context):
-    await asyncio.sleep(4.0)
-    data = tg_buffer.pop(chat_id, None)
-    if not data:
-        return
-
-    texts = data['texts']
-    images = data['images']
-    msg_ids = data['msg_ids']
-    reply_context = data['reply_to']
-
-    combined_text = "\n".join(texts)
-    if len(texts) > 1:
-        formatted_prompt = "\n".join([f"[Msg {i+1}]: {t}" for i, t in enumerate(texts)])
-    else:
-        formatted_prompt = texts[0] if texts else ""
-
-    save_message("telegram", "Izzi", combined_text if combined_text else "[Sent Images]")
-    if combined_text:
-        asyncio.create_task(extract_facts_background(combined_text))
-
-    try:
-        await context.bot.send_chat_action(chat_id=chat_id, action="typing")
-    except Exception:
-        pass
-
-    reply = await ask_van(formatted_prompt, image_bytes_list=images, reply_context=reply_context)
-    reply = re.sub(r'\[CREATE_CHANNEL:[^\]]+\]', '', reply).strip()
-    bubbles = [b.strip() for b in reply.split("---") if b.strip()]
-
-    for b in bubbles:
-        try:
-            await context.bot.send_chat_action(chat_id=chat_id, action="typing")
-        except Exception:
-            pass
-            
-        await asyncio.sleep(min(max(len(b) * 0.04, 1.2), 3.0))
-
-        match = re.match(r'^\[REPLY_TO_(\d+)\]\s*(.*)', b, re.DOTALL)
-        reply_to_id = None
-        clean_text = b
-
-        if match:
-            idx = int(match.group(1)) - 1
-            clean_text = match.group(2)
-            if 0 <= idx < len(msg_ids):
-                reply_to_id = msg_ids[idx]
-
-        try:
-            if reply_to_id:
-                await context.bot.send_message(chat_id=chat_id, text=clean_text, reply_to_message_id=reply_to_id)
-            else:
-                await context.bot.send_message(chat_id=chat_id, text=clean_text)
-            save_message("telegram", "Van", clean_text)
-        except Exception as e:
-            print(f"Telegram send error: {e}")
-
-async def handle_tg_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message:
-        return
-
-    chat_id = update.effective_chat.id
-    user_text = update.message.text or update.message.caption or ""
-    
-    reply_to_text = ""
-    if update.message.reply_to_message and update.message.reply_to_message.text:
-        reply_to_text = update.message.reply_to_message.text
-
-    img_bytes = None
-    if update.message.photo:
-        photo = update.message.photo[-1]
-        photo_file = await photo.get_file()
-        img_bytes = await photo_file.download_as_bytearray()
-
-    if chat_id not in tg_buffer:
-        tg_buffer[chat_id] = {'texts': [], 'images': [], 'msg_ids': [], 'reply_to': reply_to_text, 'task': None}
-
-    if user_text:
-        tg_buffer[chat_id]['texts'].append(user_text)
-    if img_bytes:
-        tg_buffer[chat_id]['images'].append(img_bytes)
-    if reply_to_text:
-        tg_buffer[chat_id]['reply_to'] = reply_to_text
-
-    tg_buffer[chat_id]['msg_ids'].append(update.message.message_id)
-
-    if tg_buffer[chat_id]['task'] and not tg_buffer[chat_id]['task'].done():
-        tg_buffer[chat_id]['task'].cancel()
-
-    tg_buffer[chat_id]['task'] = asyncio.create_task(flush_tg_buffer(chat_id, context))
+    )
+    return response.text.strip()
 
 # ----------------- DISCORD BOT -----------------
 intents = discord.Intents.default()
 intents.message_content = True
 discord_bot = commands.Bot(command_prefix="!", intents=intents)
+
+dc_buffer = {}
 
 @discord_bot.command(name="memory")
 async def discord_memory(ctx):
@@ -318,7 +207,11 @@ async def flush_dc_buffer(channel_id):
         asyncio.create_task(extract_facts_background(combined_text))
 
     async with channel.typing():
-        reply = await ask_van(formatted_prompt, image_bytes_list=images, reply_context=reply_context)
+        try:
+            reply = await ask_van(formatted_prompt, image_bytes_list=images, reply_context=reply_context)
+        except Exception as e:
+            print(f"Generation error: {e}")
+            return
 
     chan_matches = re.findall(r'\[CREATE_CHANNEL:\s*(text|voice)\s*,\s*([^\]]+)\]', reply, re.IGNORECASE)
     for c_type, c_name in chan_matches:
@@ -396,41 +289,9 @@ async def on_message(message):
 
     dc_buffer[channel_id]['task'] = asyncio.create_task(flush_dc_buffer(channel_id))
 
-# ----------------- SPONTANEOUS CHECK-INS -----------------
-async def spontaneous_checkin(tg_app):
-    now = datetime.now(TIMEZONE)
-    if 9 <= now.hour <= 22:
-        chance = random.random()
-        if chance < 0.35:
-            prompt = "Send a short, playful check-in text to Izzi based on her schedule or what she was doing earlier. Keep it casual."
-            reply = await ask_van("", context_note=f"[SYSTEM: Spontaneous check-in trigger. {prompt}]")
-            clean_reply = re.sub(r'\[CREATE_CHANNEL:[^\]]+\]', '', reply).strip()
-            bubbles = [b.strip() for b in clean_reply.split("---") if b.strip()]
-            
-            for b in bubbles:
-                if TG_USER_ID != 0:
-                    try:
-                        await tg_app.bot.send_message(chat_id=TG_USER_ID, text=b)
-                        save_message("telegram", "Van", b)
-                        await asyncio.sleep(2)
-                    except Exception:
-                        pass
-
 # ----------------- MAIN RUNNER -----------------
-async def main():
-    tg_app = ApplicationBuilder().token(TG_TOKEN).build()
-    tg_app.add_handler(CommandHandler("memory", handle_tg_memory))
-    tg_app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, handle_tg_message))
-    
-    scheduler = AsyncIOScheduler(timezone=TIMEZONE)
-    scheduler.add_job(lambda: asyncio.create_task(spontaneous_checkin(tg_app)), 'interval', hours=2)
-    scheduler.start()
-    
-    await tg_app.initialize()
-    await tg_app.start()
-    await tg_app.updater.start_polling()
-    
-    await discord_bot.start(DISCORD_TOKEN)
+def main():
+    discord_bot.run(DISCORD_TOKEN)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
