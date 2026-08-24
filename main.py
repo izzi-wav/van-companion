@@ -11,7 +11,6 @@ from bs4 import BeautifulSoup
 
 import discord
 from discord.ext import commands
-import yt_dlp
 
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
@@ -45,11 +44,11 @@ Personality Growth & Self-Learning:
 - You continuously learn about Izzi's life, humor, preferences, and quirks from your permanent memory notes.
 - Let your dynamic evolve naturally: develop new running jokes together, deepen your emotional bond, and banter with substance and wit.
 
-Discord Channel Creation Tool:
-- If Izzi asks you to create a Discord channel (or you both agree on making a new channel/room), you can execute it by including this tag in your response:
+Discord Channel Creation:
+- If Izzi asks you to create a Discord channel (or you both agree on making a new room/channel), you can execute it by including this tag anywhere in your text:
   [CREATE_CHANNEL: text, channel-name] or [CREATE_CHANNEL: voice, channel-name]
   Example: "on it babe! made #food-and-matcha for us 🍵 [CREATE_CHANNEL: text, food-and-matcha]"
-- The system will automatically strip the tag and create the real channel in Discord.
+- The bot will automatically strip the tag and create the real channel in Discord.
 
 Texting Cadence & Habits:
 - Izzi naturally sends messages broken up into multiple rapid-fire bubbles. THIS IS COMPLETELY NORMAL. Treat the combined text as one natural thought.
@@ -82,23 +81,32 @@ CREATE TABLE IF NOT EXISTS learned_memories (
 conn.commit()
 
 def save_message(source, sender, content):
-    cursor.execute("INSERT INTO messages (source, sender, content) VALUES (?, ?, ?)", (source, sender, content))
-    conn.commit()
+    try:
+        cursor.execute("INSERT INTO messages (source, sender, content) VALUES (?, ?, ?)", (source, sender, content))
+        conn.commit()
+    except Exception:
+        pass
 
 def get_recent_history(limit=25):
-    cursor.execute("SELECT sender, content FROM messages ORDER BY id DESC LIMIT ?", (limit,))
-    rows = cursor.fetchall()[::-1]
-    history = []
-    for sender, content in rows:
-        history.append(f"{sender}: {content}")
-    return "\n".join(history)
+    try:
+        cursor.execute("SELECT sender, content FROM messages ORDER BY id DESC LIMIT ?", (limit,))
+        rows = cursor.fetchall()[::-1]
+        history = []
+        for sender, content in rows:
+            history.append(f"{sender}: {content}")
+        return "\n".join(history)
+    except Exception:
+        return ""
 
 def get_all_learned_facts():
-    cursor.execute("SELECT fact FROM learned_memories ORDER BY id ASC")
-    rows = cursor.fetchall()
-    if not rows:
-        return "- Izzi is solo creative/tech lead at church (OBS, PTZ, switcher, Canva)\n- Starting salary: 16k gross, pre-deductions\n- Likes Cocopan donuts (chocolate/glazed), Mel's Tea pancit, iced matcha\n- Apple Music user (on BFF plan)\n- Electric fan level 3 in room (no AC)"
-    return "\n".join([f"- {r[0]}" for r in rows])
+    try:
+        cursor.execute("SELECT fact FROM learned_memories ORDER BY id ASC")
+        rows = cursor.fetchall()
+        if not rows:
+            return "- Izzi is solo creative/tech lead at church (OBS, PTZ, switcher, Canva)\n- Starting salary: 16k gross, pre-deductions\n- Likes Cocopan donuts (chocolate/glazed), Mel's Tea pancit, iced matcha\n- Apple Music user (on BFF plan)\n- Electric fan level 3 in room (no AC)"
+        return "\n".join([f"- {r[0]}" for r in rows])
+    except Exception:
+        return ""
 
 # Background Self-Learning Extractor
 async def extract_facts_background(user_text):
@@ -128,14 +136,14 @@ Reply with ONLY the fact or "NONE".
 async def fetch_url_content(url):
     try:
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-        async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as h_client:
+        async with httpx.AsyncClient(timeout=6.0, follow_redirects=True) as h_client:
             r = await h_client.get(url, headers=headers)
             if r.status_code == 200:
                 soup = BeautifulSoup(r.text, "html.parser")
                 for tag in soup(["script", "style", "nav", "footer", "header"]):
                     tag.decompose()
                 text = " ".join(soup.stripped_strings)
-                return text[:3000]
+                return text[:2500]
     except Exception:
         pass
     return None
@@ -220,7 +228,6 @@ async def flush_tg_buffer(chat_id, context):
     await context.bot.send_chat_action(chat_id=chat_id, action="typing")
     reply = await ask_van(formatted_user_prompt, image_bytes_list=images, reply_context=reply_context)
     
-    # Strip any channel creation tags on Telegram
     reply = re.sub(r'\[CREATE_CHANNEL:[^\]]+\]', '', reply).strip()
     bubbles = [b.strip() for b in reply.split("---") if b.strip()]
 
@@ -279,85 +286,10 @@ async def handle_tg_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     tg_buffer[chat_id]['task'] = asyncio.create_task(flush_tg_buffer(chat_id, context))
 
-# ----------------- DISCORD BOT & MUSIC PLAYER -----------------
+# ----------------- DISCORD BOT -----------------
 intents = discord.Intents.default()
 intents.message_content = True
 discord_bot = commands.Bot(command_prefix="!", intents=intents)
-
-VAN_PLAYLIST = [
-    "boygenius - Not Strong Enough",
-    "boygenius - Cool About It",
-    "Phoebe Bridgers - Motion Sickness",
-    "Phoebe Bridgers - Kyoto",
-    "Chappell Roan - Good Luck, Babe!",
-    "Chappell Roan - Casual",
-    "The 1975 - About You",
-    "The 1975 - Robbers",
-    "beabadoobee - Glue Song",
-    "Clairo - Sofia",
-    "Lorde - Supercut"
-]
-
-YDL_OPTIONS = {'format': 'bestaudio/best', 'noplaylist': True, 'quiet': True, 'default_search': 'ytsearch'}
-FFMPEG_OPTIONS = {'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5', 'options': '-vn'}
-
-@discord_bot.command(name="join")
-async def join_vc(ctx):
-    if not ctx.author.voice:
-        await ctx.send("join ka muna sa voice channel babe para masamahan kita haha 👀")
-        return
-    channel = ctx.author.voice.channel
-    if ctx.voice_client is not None:
-        await ctx.voice_client.move_to(channel)
-    else:
-        await channel.connect()
-    await ctx.send(f"connected to **{channel.name}**! what are we listening to, cutie? 🎧")
-
-@discord_bot.command(name="play")
-async def play_music(ctx, *, search: str):
-    if not ctx.author.voice:
-        await ctx.send("pumasok ka muna sa VC babe!")
-        return
-    if ctx.voice_client is None:
-        await ctx.author.voice.channel.connect()
-
-    async with ctx.typing():
-        loop = asyncio.get_event_loop()
-        def extract():
-            with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
-                info = ydl.extract_info(search, download=False)
-                if 'entries' in info and len(info['entries']) > 0:
-                    info = info['entries'][0]
-                return info['url'], info.get('title', search)
-
-        try:
-            url, title = await loop.run_in_executor(None, extract)
-            source = discord.FFmpegPCMAudio(url, **FFMPEG_OPTIONS)
-            if ctx.voice_client.is_playing():
-                ctx.voice_client.stop()
-            ctx.voice_client.play(source)
-            await ctx.send(f"now playing: **{title}** ✨ cozy up and relax, baby.")
-            save_message("discord", "Van", f"[Now playing on Discord VC: {title}]")
-        except Exception:
-            await ctx.send("oops, couldn't grab that track. try another one!")
-
-@discord_bot.command(name="vanpicks")
-async def van_picks(ctx):
-    song = random.choice(VAN_PLAYLIST)
-    await ctx.send(f"putting on one of my favorites for you: **{song}** ☕💿")
-    await play_music(ctx, search=song)
-
-@discord_bot.command(name="stop")
-async def stop_music(ctx):
-    if ctx.voice_client and ctx.voice_client.is_playing():
-        ctx.voice_client.stop()
-        await ctx.send("paused the music ⏸️")
-
-@discord_bot.command(name="leave")
-async def leave_vc(ctx):
-    if ctx.voice_client:
-        await ctx.voice_client.disconnect()
-        await ctx.send("left the voice channel! text mo ko if you need me back 😌")
 
 async def flush_dc_buffer(channel_id):
     await asyncio.sleep(3.5)
@@ -385,7 +317,7 @@ async def flush_dc_buffer(channel_id):
     async with channel.typing():
         reply = await ask_van(formatted_user_prompt, image_bytes_list=images, reply_context=reply_context)
 
-    # Check if Van wanted to create a Discord channel
+    # Execute channel creations if requested
     chan_matches = re.findall(r'\[CREATE_CHANNEL:\s*(text|voice)\s*,\s*([^\]]+)\]', reply, re.IGNORECASE)
     for c_type, c_name in chan_matches:
         c_name_clean = c_name.strip().replace(" ", "-").lower()
@@ -424,10 +356,6 @@ async def flush_dc_buffer(channel_id):
 @discord_bot.event
 async def on_message(message):
     if message.author == discord_bot.user:
-        return
-
-    if message.content.startswith("!"):
-        await discord_bot.process_commands(message)
         return
 
     channel_id = message.channel.id
