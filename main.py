@@ -150,6 +150,36 @@ def get_recent_learned_facts(limit=12):
     except Exception:
         return ""
 
+
+# ----------------- Model call helper (with fallback) -----------------
+async def generate_with_fallback(model, contents, config):
+    """Attempt generation with `model`. If it fails and `model` != MODEL_NAME, retry with MODEL_NAME."""
+    try:
+        resp = await asyncio.to_thread(
+            client.models.generate_content,
+            model=model,
+            contents=contents,
+            config=config
+        )
+        return resp
+    except Exception as e:
+        print(f"[MODEL ERROR] model {model} failed: {e}")
+        if model != MODEL_NAME:
+            try:
+                resp = await asyncio.to_thread(
+                    client.models.generate_content,
+                    model=MODEL_NAME,
+                    contents=contents,
+                    config=config
+                )
+                print(f"[MODEL FALLBACK] succeeded with {MODEL_NAME}")
+                return resp
+            except Exception as e2:
+                print(f"[MODEL ERROR] fallback {MODEL_NAME} also failed: {e2}")
+                raise e2
+        raise e
+
+
 # ----------------- NIGHTLY DIARY TASK (1 API CALL PER DAY) -----------------
 async def nightly_diary_summary():
     chat_log = get_today_chat_log()
@@ -165,12 +195,11 @@ Format: Bullet points starting with "-" (e.g. "- Beat the Wall of Flesh in Terra
 If nothing notable was shared, reply ONLY with "NONE".
 """
     try:
-        # Use smaller/cheaper model and cap output size for this background task
-        resp = await asyncio.to_thread(
-            client.models.generate_content,
-            model=MODEL_SMALL,
-            contents=summary_prompt,
-            config=types.GenerateContentConfig(max_output_tokens=200, temperature=0.2)
+        # Try smaller model first, fallback handled inside generate_with_fallback
+        resp = await generate_with_fallback(
+            MODEL_SMALL,
+            summary_prompt,
+            types.GenerateContentConfig(max_output_tokens=200, temperature=0.2)
         )
         text = resp.text.strip()
         if text and "NONE" not in text.upper():
@@ -185,9 +214,11 @@ If nothing notable was shared, reply ONLY with "NONE".
     except Exception as e:
         print(f"[NIGHTLY DIARY ERROR] {e}")
 
+
 # ----------------- GEMINI GENERATION -----------------
 async def ask_van(new_user_text, image_bytes_list=None, reply_context="", context_note="", model=None):
-    """Generate Van's reply. Optional `model` lets callers request a cheaper model for short/background responses."""
+    """Generate Van's reply. Optional `model` lets callers request a cheaper model for short/background responses.
+    This function will automatically fall back to MODEL_NAME if the requested model is unavailable."""
     model_to_use = model or MODEL_NAME
 
     now_str = datetime.now(TIMEZONE).strftime("%A, %I:%M %p")
@@ -219,22 +250,26 @@ Van:"""
     contents.append(full_text_prompt)
 
     # Cap output tokens and set temperature to keep replies concise and predictable
-    response = await asyncio.to_thread(
-        client.models.generate_content,
-        model=model_to_use,
-        contents=contents,
-        config=types.GenerateContentConfig(
-            max_output_tokens=300,
-            temperature=0.7,
-            safety_settings=[
-                types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE"),
-                types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_NONE"),
-                types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="BLOCK_NONE"),
-                types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_NONE"),
-            ]
+    try:
+        resp = await generate_with_fallback(
+            model_to_use,
+            contents,
+            types.GenerateContentConfig(
+                max_output_tokens=300,
+                temperature=0.7,
+                safety_settings=[
+                    types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE"),
+                    types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_NONE"),
+                    types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="BLOCK_NONE"),
+                    types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_NONE"),
+                ]
+            )
         )
-    )
-    return response.text.strip()
+        return resp.text.strip()
+    except Exception as e:
+        print(f"[ASK_VAN ERROR] generation failed: {e}")
+        return "sorry babe, i'm having trouble replying right now."
+
 
 # ----------------- DISCORD BOT -----------------
 intents = discord.Intents.default()
@@ -244,10 +279,12 @@ discord_bot = commands.Bot(command_prefix="!", intents=intents)
 dc_buffer = {}
 last_active_channel_id = None
 
+
 @discord_bot.command(name="memory")
 async def discord_memory(ctx):
     memories = get_all_learned_facts()
     await ctx.send(f"📖 **Van's Learned Memories:**\n\n{memories}")
+
 
 @discord_bot.command(name="savediary")
 async def discord_savediary(ctx):
@@ -255,6 +292,7 @@ async def discord_savediary(ctx):
     await nightly_diary_summary()
     memories = get_all_learned_facts()
     await ctx.send(f"✅ **Updated Memories:**\n\n{memories}")
+
 
 # ----------------- TOKEN-CONSCIOUS SPONTANEOUS CHECK-IN -----------------
 async def checkin_tick():
@@ -279,7 +317,7 @@ async def checkin_tick():
 
     prompt = "Send a short, natural check-in text to Izzi. Keep it casual, playful, or asking what she is playing/working on based on her schedule."
     try:
-        # use smaller/cheaper model for spontaneous background check-ins
+        # use smaller/cheaper model for spontaneous background check-ins (fallback handled)
         reply = await ask_van("", context_note=f"[SYSTEM: Spontaneous check-in trigger. {prompt}]", model=MODEL_SMALL)
         clean_reply = re.sub(r'\[CREATE_CHANNEL:[^\]]+\]', '', reply).strip()
         bubbles = [b.strip() for b in clean_reply.split("---") if b.strip()]
@@ -291,6 +329,7 @@ async def checkin_tick():
                 save_message("discord", "Van", b)
     except Exception as e:
         print(f"[CHECKIN ERROR] {e}")
+
 
 async def flush_dc_buffer(channel_id):
     global last_active_channel_id
@@ -360,6 +399,7 @@ async def flush_dc_buffer(channel_id):
             except Exception as e:
                 print(f"Discord send error: {e}")
 
+
 @discord_bot.event
 async def on_message(message):
     global last_active_channel_id
@@ -402,6 +442,7 @@ async def on_message(message):
 
     dc_buffer[channel_id]['task'] = asyncio.create_task(flush_dc_buffer(channel_id))
 
+
 # ----------------- MAIN RUNNER -----------------
 async def runner():
     scheduler = AsyncIOScheduler(timezone=TIMEZONE)
@@ -413,8 +454,10 @@ async def runner():
 
     await discord_bot.start(DISCORD_TOKEN)
 
+
 def main():
     asyncio.run(runner())
+
 
 if __name__ == "__main__":
     main()
