@@ -19,6 +19,8 @@ TIMEZONE = pytz.timezone("Asia/Manila")
 
 client = genai.Client(api_key=GEMINI_KEY)
 MODEL_NAME = "gemini-3.6-flash"
+# cheaper model for lightweight tasks (if available in your account)
+MODEL_SMALL = "gemini-3.6-mini"
 
 # ----------------- SYSTEM PROMPT -----------------
 VAN_PROMPT = """
@@ -73,6 +75,7 @@ def get_db():
     conn.commit()
     return conn
 
+
 def save_message(source, sender, content):
     try:
         conn = get_db()
@@ -81,6 +84,7 @@ def save_message(source, sender, content):
         conn.close()
     except Exception as e:
         print(f"Error saving message: {e}")
+
 
 def get_recent_history(limit=20):
     try:
@@ -93,6 +97,7 @@ def get_recent_history(limit=20):
     except Exception:
         return ""
 
+
 def get_today_chat_log():
     try:
         conn = get_db()
@@ -103,6 +108,7 @@ def get_today_chat_log():
         return "\n".join([f"{sender}: {content}" for sender, content in rows])
     except Exception:
         return ""
+
 
 def get_last_message_time():
     try:
@@ -117,6 +123,7 @@ def get_last_message_time():
         pass
     return None
 
+
 def get_all_learned_facts():
     try:
         conn = get_db()
@@ -125,8 +132,21 @@ def get_all_learned_facts():
         rows = cur.fetchall()
         conn.close()
         if not rows:
-            return "- Izzi is solo creative/tech lead at church (OBS, PTZ, switcher, Canva)\n- Starting salary: 16k gross\n- Likes Cocopan donuts (chocolate/glazed), Mel's Tea pancit, iced matcha\n- Apple Music user (on BFF plan)\n- Electric fan level 3 in room (no AC)"
+            return "- Izzi is solo creative/tech lead at church (OBS, PTZ, switcher, Canva)\n- Starting salary: 16k gross\n- Likes Cocopan donuts (chocolate/glazed), Mel's Tea pancit, iced matcha[...]"
         return "\n".join([f"- {r[0]}" for r in rows])
+    except Exception:
+        return ""
+
+# New: send only the most recent / relevant learned facts to the model to save tokens
+def get_recent_learned_facts(limit=12):
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT fact FROM learned_memories ORDER BY id DESC LIMIT ?", (limit,))
+        rows = cur.fetchall()
+        conn.close()
+        # return oldest->newest within the limited window
+        return "\n".join([f"- {r[0]}" for r in rows[::-1]])
     except Exception:
         return ""
 
@@ -145,10 +165,12 @@ Format: Bullet points starting with "-" (e.g. "- Beat the Wall of Flesh in Terra
 If nothing notable was shared, reply ONLY with "NONE".
 """
     try:
+        # Use smaller/cheaper model and cap output size for this background task
         resp = await asyncio.to_thread(
             client.models.generate_content,
-            model=MODEL_NAME,
-            contents=summary_prompt
+            model=MODEL_SMALL,
+            contents=summary_prompt,
+            config=types.GenerateContentConfig(max_output_tokens=200, temperature=0.2)
         )
         text = resp.text.strip()
         if text and "NONE" not in text.upper():
@@ -164,10 +186,15 @@ If nothing notable was shared, reply ONLY with "NONE".
         print(f"[NIGHTLY DIARY ERROR] {e}")
 
 # ----------------- GEMINI GENERATION -----------------
-async def ask_van(new_user_text, image_bytes_list=None, reply_context="", context_note=""):
+async def ask_van(new_user_text, image_bytes_list=None, reply_context="", context_note="", model=None):
+    """Generate Van's reply. Optional `model` lets callers request a cheaper model for short/background responses."""
+    model_to_use = model or MODEL_NAME
+
     now_str = datetime.now(TIMEZONE).strftime("%A, %I:%M %p")
-    chat_history = get_recent_history()
-    learned_notes = get_all_learned_facts()
+    # reduce recent history tokens by lowering the default number of messages included
+    chat_history = get_recent_history(12)
+    # send only a limited number of learned facts to save tokens
+    learned_notes = get_recent_learned_facts(12)
     
     quoted_block = f"\n[IZZI QUOTED THIS MESSAGE: \"{reply_context}\"]\n" if reply_context else ""
 
@@ -191,11 +218,14 @@ Van:"""
             contents.append(types.Part.from_bytes(data=img, mime_type="image/jpeg"))
     contents.append(full_text_prompt)
 
+    # Cap output tokens and set temperature to keep replies concise and predictable
     response = await asyncio.to_thread(
         client.models.generate_content,
-        model=MODEL_NAME,
+        model=model_to_use,
         contents=contents,
         config=types.GenerateContentConfig(
+            max_output_tokens=300,
+            temperature=0.7,
             safety_settings=[
                 types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE"),
                 types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_NONE"),
@@ -249,7 +279,8 @@ async def checkin_tick():
 
     prompt = "Send a short, natural check-in text to Izzi. Keep it casual, playful, or asking what she is playing/working on based on her schedule."
     try:
-        reply = await ask_van("", context_note=f"[SYSTEM: Spontaneous check-in trigger. {prompt}]")
+        # use smaller/cheaper model for spontaneous background check-ins
+        reply = await ask_van("", context_note=f"[SYSTEM: Spontaneous check-in trigger. {prompt}]", model=MODEL_SMALL)
         clean_reply = re.sub(r'\[CREATE_CHANNEL:[^\]]+\]', '', reply).strip()
         bubbles = [b.strip() for b in clean_reply.split("---") if b.strip()]
 
