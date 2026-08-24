@@ -1,5 +1,7 @@
 google-genai
 python-telegram-bot
 discord.py
+httpx
+beautifulsoup4
 apscheduler
 pytz
