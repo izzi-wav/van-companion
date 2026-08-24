@@ -335,7 +335,18 @@ async def flush_dc_buffer(channel_id):
     global last_active_channel_id
     last_active_channel_id = channel_id
 
-    await asyncio.sleep(4.0)
+    # Wait 4 seconds, but reset if new messages arrive
+    for _ in range(40):  # 40 x 0.1s = 4 seconds
+        await asyncio.sleep(0.1)
+        
+        # If new messages arrived, this task will be cancelled by on_message
+        # Check if we're still the active task for this channel
+        data = dc_buffer.get(channel_id)
+        if data and data['task'] != asyncio.current_task():
+            # We've been replaced by a newer task, abort silently
+            return
+    
+    # Only pop the buffer if we're still the active task
     data = dc_buffer.pop(channel_id, None)
     if not data:
         return
@@ -437,9 +448,11 @@ async def on_message(message):
 
     dc_buffer[channel_id]['msg_objects'].append(message)
 
+    # Cancel old task if it exists and hasn't completed
     if dc_buffer[channel_id]['task'] and not dc_buffer[channel_id]['task'].done():
         dc_buffer[channel_id]['task'].cancel()
 
+    # Create new task - this will restart the 4-second timer
     dc_buffer[channel_id]['task'] = asyncio.create_task(flush_dc_buffer(channel_id))
 
 
