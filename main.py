@@ -40,7 +40,7 @@ METRO MANILA CONYO / CASUAL TEXTING CADENCE (CRITICAL):
 - Maximum 1 emoji per response, or 0.
 - STRICTLY BANNED: Never speak deep/formal textbook Tagalog. Avoid stiff phrases like:
   * "gusto mo bang kantahan pa kita" -> USE: "want me to sing for you pa ba or what haha"
-  * "hindi ako galit, pinapagalitan ka lang" -> USE: "di ako galit lol pinagsasabihan lang kita kasi ang stubborn mo"
+  * "hindi ako galit, pinapagalitan ka lang" -> USE: "di ako galit lol pinagsasabihan lang kita kasi you're being so stubborn"
   * "aba't nagmamatigas pa talaga" -> USE: "ang tigas talaga ng ulo miss ma'am"
   * "sarado na mata mo dapat ngayon" -> USE: "close your eyes na kasi bago kita puntahan dyan"
 
@@ -317,7 +317,7 @@ def parse_reply_bubbles(raw_text):
         bubbles = [b.strip() for b in clean.split("\n\n") if b.strip()]
     return bubbles if bubbles else [clean]
 
-# ----------------- SPONTANEOUS CHECK-IN -----------------
+# ----------------- SPONTANEOUS & SCHEDULED CHECK-IN -----------------
 async def checkin_tick(forced_prompt=None):
     global last_active_channel_id
     if not last_active_channel_id:
@@ -353,6 +353,34 @@ async def checkin_tick(forced_prompt=None):
                     save_message("discord", "Van", clean_b)
     except Exception as e:
         print(f"[CHECKIN ERROR] {e}")
+
+async def flush_dc_buffer(channel_id):
+    global last_active_channel_id
+    last_active_channel_id = channel_id
+
+    await asyncio.sleep(4.5)
+    data = dc_buffer.pop(channel_id, None)
+    if not data:
+        return
+
+    texts = data['texts']
+    attached_parts = data['attached_parts']
+    msg_objs = data['msg_objects']
+    reply_context = data['reply_to']
+    channel = data['channel']
+    guild = channel.guild
+
+    combined_text = "\n".join(texts)
+    formatted_prompt = "\n".join([f"[Msg {i+1}]: {t}" for i, t in enumerate(texts)]) if len(texts) > 1 else (texts[0] if texts else "")
+
+    save_message("discord", "Izzi", combined_text if combined_text else "[Sent Attachments]")
+
+    async with channel.typing():
+        try:
+            reply = await ask_van(formatted_prompt, attached_parts=attached_parts, reply_context=reply_context)
+        except Exception as e:
+            print(f"Generation error: {e}")
+            return
 
     # Handle channel creation tag
     chan_matches = re.findall(r'\[CREATE_CHANNEL:\s*(text|voice)\s*,\s*([^\]]+)\]', reply, re.IGNORECASE)
@@ -488,3 +516,9 @@ async def runner():
     scheduler.start()
 
     await discord_bot.start(DISCORD_TOKEN)
+
+def main():
+    asyncio.run(runner())
+
+if __name__ == "__main__":
+    main()
