@@ -177,19 +177,23 @@ async def extract_url_content(text):
                 
     return "\n\n".join(extracted)
 
-# ----------------- MODEL CALL HELPER -----------------
+# ----------------- MODEL CALL HELPER WITH RETRY -----------------
 async def generate_with_fallback(model, contents, config):
-    try:
-        resp = await asyncio.to_thread(
-            client.models.generate_content,
-            model=model,
-            contents=contents,
-            config=config
-        )
-        return resp
-    except Exception as e:
-        print(f"[MODEL ERROR] {model} failed: {e}")
-        raise e
+    for attempt in range(2):
+        try:
+            resp = await asyncio.to_thread(
+                client.models.generate_content,
+                model=model,
+                contents=contents,
+                config=config
+            )
+            return resp
+        except Exception as e:
+            print(f"[MODEL ERROR] attempt {attempt+1} failed: {e}")
+            if attempt == 0:
+                await asyncio.sleep(1.5)
+            else:
+                raise e
 
 # ----------------- NIGHTLY DIARY TASK -----------------
 async def nightly_diary_summary():
@@ -331,7 +335,6 @@ async def checkin_tick(forced_prompt=None):
     if not channel:
         return
 
-    # Check how long it has been since the last message
     last_msg_time = get_last_message_time()
     if last_msg_time and not forced_prompt:
         diff_hours = (datetime.now() - last_msg_time).total_seconds() / 3600
@@ -369,18 +372,23 @@ async def flush_dc_buffer(channel_id):
     global last_active_channel_id
     last_active_channel_id = channel_id
 
-    # 6.0 second debounce: perfect for phone typing speeds
     await asyncio.sleep(6.0)
     data = dc_buffer.pop(channel_id, None)
     if not data:
         return
 
-    texts = data['texts']
+    raw_texts = data['texts']
     attached_parts = data['attached_parts']
     msg_objs = data['msg_objects']
     reply_context = data['reply_to']
     channel = data['channel']
     guild = channel.guild
+
+    # Deduplicate repeated text packets from Discord embed unfurls
+    texts = []
+    for t in raw_texts:
+        if not texts or t != texts[-1]:
+            texts.append(t)
 
     combined_text = "\n".join(texts)
     formatted_prompt = "\n".join([f"[Msg {i+1}]: {t}" for i, t in enumerate(texts)]) if len(texts) > 1 else (texts[0] if texts else "")
@@ -412,7 +420,6 @@ async def flush_dc_buffer(channel_id):
         async with channel.typing():
             await asyncio.sleep(min(max(len(b) * 0.045, 1.2), 2.8) + random.uniform(0.2, 0.5))
 
-            # Match and clean [REPLY_TO_X] tag reliably
             match = re.search(r'\[REPLY_TO_(\d+)\]', b)
             target_msg = None
             clean_text = re.sub(r'\[REPLY_TO_\d+\]', '', b).strip()
@@ -531,9 +538,9 @@ async def on_message(message):
 # ----------------- RUNNER -----------------
 async def runner():
     scheduler = AsyncIOScheduler(timezone=TIMEZONE)
-    scheduler.add_job(lambda: asyncio.create_task(nightly_diary_summary()), 'cron', hour=23, minute=59)
-    # Guaranteed morning wake-up + daytime check-ins
-    scheduler.add_job(lambda: asyncio.create_task(checkin_tick()), 'cron', hour='7,12,15,20', minute=30)
+    scheduler.add_job(nightly_diary_summary, 'cron', hour=23, minute=59)
+    # Guaranteed morning wake-up + daytime check-ins (pass async function directly)
+    scheduler.add_job(checkin_tick, 'cron', hour='7,12,15,20', minute=30)
     scheduler.start()
 
     await discord_bot.start(DISCORD_TOKEN)
