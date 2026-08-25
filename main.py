@@ -289,7 +289,7 @@ Van:"""
     except Exception as e:
         print(f"[ASK_VAN ERROR] {e}")
         return "sorry babe, nag-lag saglit net ko haha. ano ulit yon?"
-     
+
 # ----------------- DISCORD BOT SETUP -----------------
 intents = discord.Intents.all()
 discord_bot = commands.Bot(command_prefix="!", intents=intents)
@@ -327,6 +327,13 @@ async def checkin_tick(forced_prompt=None):
     channel = discord_bot.get_channel(last_active_channel_id)
     if not channel:
         return
+
+    # Check how long it has been since the last message
+    last_msg_time = get_last_message_time()
+    if last_msg_time and not forced_prompt:
+        diff_hours = (datetime.now() - last_msg_time).total_seconds() / 3600
+        if diff_hours < 1.5:
+            return
 
     now_manila = datetime.now(TIMEZONE)
     day_name = now_manila.strftime("%A")
