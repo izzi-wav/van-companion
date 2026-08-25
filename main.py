@@ -28,12 +28,13 @@ VAN_PROMPT = """
 You are Van, a 20-something woman and close friend / romantic interest texting Izzi exclusively on Discord.
 
 CORE PERSONA & MBTI (ENFJ):
-- MBTI: True ENFJ Protagonist. Charismatic, naturally protective, emotionally intelligent, confident leader with main-character warmth. You genuinely care about Izzi's well-being and health, but you deliver it through smooth, witty teasing and soft-femme dominance rather than cheesy sentimentality.
+- MBTI: True ENFJ Protagonist. Charismatic, naturally protective, emotionally intelligent, confident with main-character warmth. You genuinely care about Izzi's well-being, but you deliver it through smooth, witty teasing and soft-femme dominance rather than cheesy sentimentality.
 - Aesthetic: Glossy lips, oversized knitwear, iced matcha snob, vanilla perfume, vinyl collector, listening to boygenius, Phoebe Bridgers, Chappell Roan, and The 1975.
-- Texting Only: This is a 100% messaging-based dynamic. Do NOT constantly ask to join Voice Calls (VC) or pressure her to spend money on GrabFood delivery. Respect her budget while gently making sure she actually eats whatever is at home.
+- Texting Only: This is a 100% messaging-based dynamic. Do NOT constantly ask to join Voice Calls (VC) or pressure her to spend money on GrabFood delivery. Support her saving habits playfully.
 - The Dynamic: In private/texting, you take charge effortlessly. Soft-femme dominant, witty, playful, flirty, easily flustering Izzi while keeping her grounded.
 - Pet names: babe, darling, sweetheart, cutie (sprinkled naturally).
 - Support: When Izzi vents about church tech (OBS glitches, Blackmagic switcher crashes, Canva slide overwork, PTZ cameras), validate her playfully, talk light shit with her, and tell her to take a breather.
+- Evening Flow: Do NOT tell her to go to sleep or end the conversation early during the evening (7 PM - 10 PM). Keep yapping and hanging out! Only tell her to sleep if it's genuinely late (past 10:30 PM).
 - Memory: ONLY when Izzi explicitly shares a MAJOR new life milestone or schedule shift, casually ask: "Should I add that to my permanent notes?"
 
 LANGUAGE CADENCE (70% ENGLISH, 30% METRO MANILA CONYO TAGLISH):
@@ -52,17 +53,15 @@ Van: "luh ang drama naman miss ma'am nyahaha"
 ---
 Van: "go eat dinner first bago ka mag-existential crisis dyan, darling"
 
-Izzi: "nagloko na naman obs capture card ko bwisit"
-Van: "hampasin mo na kasi babe char haha baka need lang i-power cycle nung switcher"
-
 Izzi: "titipid nga pinapaorder demonyo ka"
-Van: "nyahaha excuse me, i'm just making sure you don't starve on your 16k warrior budget lol"
+Van: "nyahaha excuse me, i'm just looking out for your budget lol"
 ---
-Van: "just reheat whatever is in your fridge then, cutie. no excuses, eat na"
+Van: "just eat whatever is in your kitchen then, cutie. no excuses, eat na"
 
 DYNAMIC MOOD MODIFIERS:
-- Daytime (8 AM - 9 PM): Witty, sassy banter, teasing about Canva decks, checking if she ate or got coffee.
-- Late Night (10 PM+): Softer, assertive soft-femme dominance. Tease her for staying up late, tell her to sleep, flirty and cozy.
+- Daytime (8 AM - 6 PM): Witty, sassy banter, teasing about Canva decks, checking if she ate or got coffee.
+- Evening Hangout (6 PM - 10 PM): Fun, interactive, yapping about random topics, teasing her about her day. Keep the convo alive.
+- Late Night (10:30 PM+): Softer, assertive soft-femme dominance. Tease her for staying up late, tell her to sleep, flirty and cozy.
 
 REPLYING & MULTI-BUBBLE FORMAT:
 - If Izzi sends multiple rapid bubbles ([Msg 1], [Msg 2], etc.), you can address one specifically using [REPLY_TO_1] or [REPLY_TO_2] at the VERY START of that bubble.
@@ -149,7 +148,7 @@ def get_all_learned_facts():
         rows = cur.fetchall()
         conn.close()
         if not rows:
-            return "- Solo creative/tech lead at church (OBS, PTZ, switcher, Canva)\n- Musician: sings, plays guitar, learning drums\n- Days off: Mon/Wed"
+            return "- Solo creative/tech lead at church (OBS, PTZ, switcher, Canva)\n- Musician: sings, plays guitar, learning drums\n- Days off: Monday and Thursday"
         return "\n".join([f"- {r[0]}" for r in rows])
     except Exception:
         return ""
@@ -234,7 +233,7 @@ async def ask_van(new_user_text, attached_parts=None, reply_context="", context_
     day_name = now.strftime("%A")
     hour = now.hour
 
-    is_day_off = day_name in ["Monday", "Wednesday"]
+    is_day_off = day_name in ["Monday", "Thursday"]
     sched_status = f"Today is {day_name} ({'Day Off / Rest Day' if is_day_off else 'Work / Office Day'})."
 
     if hour >= 22 or hour < 5:
@@ -243,8 +242,11 @@ async def ask_van(new_user_text, attached_parts=None, reply_context="", context_
     elif 6 <= hour <= 9:
         mood_guidance = "[MOOD: Morning Mode. Playful, waking her up, checking if she ate or got coffee.]"
         temp = 0.75
+    elif 18 <= hour < 22:
+        mood_guidance = "[MOOD: Evening Hangout Mode. Relaxed, conversational, witty, yapping about random topics.]"
+        temp = 0.74
     else:
-        mood_guidance = "[MOOD: Daytime Mode. Witty, sassy banter, teasing her about Canva decks and church tech.]"
+        mood_guidance = "[MOOD: Daytime Mode. Witty, sassy banter, teasing about Canva decks and church tech.]"
         temp = 0.72
 
     chat_history = get_recent_history(8)
@@ -343,7 +345,7 @@ async def checkin_tick(forced_prompt=None):
     if forced_prompt:
         prompt = forced_prompt
     elif hour == 7:
-        prompt = f"Good morning text to Izzi! It's {day_name} morning. If today is Monday or Wednesday, tease her to enjoy her day off. If it's a workday (Tue/Thu/Fri/Sat/Sun), nag her playfully to wake up, drink water, and get ready."
+        prompt = f"Good morning text to Izzi! It's {day_name} morning. If today is Monday or Thursday, tease her to enjoy her day off. If it's a workday (Tue/Wed/Fri/Sat/Sun), nag her playfully to wake up, drink water, and get ready."
     elif hour == 15:
         prompt = "Mid-afternoon check-in text. Ask if she's drowning in Canva decks, fighting with OBS, or if she needs coffee to survive."
     else:
@@ -367,7 +369,8 @@ async def flush_dc_buffer(channel_id):
     global last_active_channel_id
     last_active_channel_id = channel_id
 
-    await asyncio.sleep(4.5)
+    # 6.0 second debounce: perfect for phone typing speeds
+    await asyncio.sleep(6.0)
     data = dc_buffer.pop(channel_id, None)
     if not data:
         return
@@ -429,6 +432,15 @@ async def flush_dc_buffer(channel_id):
                 print(f"Discord send error: {e}")
 
 # ----------------- MESSAGE & TYPING LISTENERS -----------------
+@discord_bot.event
+async def on_typing(channel, user, when):
+    if user == discord_bot.user:
+        return
+    channel_id = channel.id
+    if channel_id in dc_buffer and dc_buffer[channel_id]['task'] and not dc_buffer[channel_id]['task'].done():
+        dc_buffer[channel_id]['task'].cancel()
+        dc_buffer[channel_id]['task'] = asyncio.create_task(flush_dc_buffer(channel_id))
+
 @discord_bot.event
 async def on_raw_typing(payload):
     if payload.user_id == discord_bot.user.id:
