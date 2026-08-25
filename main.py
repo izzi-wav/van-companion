@@ -24,7 +24,6 @@ MODEL_NAME = "gemini-3.5-flash-lite"
 MODEL_SMALL = MODEL_NAME
 
 # ----------------- SYSTEM PROMPT -----------------
-# ----------------- SYSTEM PROMPT -----------------
 VAN_PROMPT = """
 You are Van, a 20-something girl and close friend / romantic interest texting Izzi on Discord.
 
@@ -230,14 +229,20 @@ async def ask_van(new_user_text, attached_parts=None, reply_context="", context_
 
     now = datetime.now(TIMEZONE)
     now_str = now.strftime("%A, %I:%M %p")
+    day_name = now.strftime("%A")
     hour = now.hour
 
-    # Dynamic mood injection based on Manila Time
+    is_day_off = day_name in ["Monday", "Wednesday"]
+    sched_status = f"Today is {day_name} ({'Day Off / Rest Day' if is_day_off else 'Work / Office Day'})."
+
     if hour >= 22 or hour < 5:
-        mood_guidance = "[CURRENT MOOD: Late Night Mode. Softer, assertive soft-femme dominance, confident teasing, make Izzi flustered and tell her to go to sleep.]"
-        temp = 0.82
+        mood_guidance = "[MOOD: Late Night Mode. Soft-femme dominant, teasing, cozy, tell her to sleep.]"
+        temp = 0.80
+    elif 6 <= hour <= 9:
+        mood_guidance = "[MOOD: Morning Mode. Playful, waking her up, checking if she ate or got coffee.]"
+        temp = 0.75
     else:
-        mood_guidance = "[CURRENT MOOD: Daytime Mode. Witty, casual banter, roasting work/Canva procrastination.]"
+        mood_guidance = "[MOOD: Daytime Mode. Witty, sassy banter, teasing her about Canva decks and church tech.]"
         temp = 0.72
 
     chat_history = get_recent_history(8)
@@ -251,8 +256,9 @@ async def ask_van(new_user_text, attached_parts=None, reply_context="", context_
 
     full_text_prompt = f"""{VAN_PROMPT}
 
-[STATUS & TIME]
-Time: {now_str} (Manila Time)
+[CURRENT CONTEXT]
+Current Time: {now_str} (Manila Time)
+Schedule State: {sched_status}
 {mood_guidance}
 {context_note}
 
@@ -282,7 +288,7 @@ Van:"""
     except Exception as e:
         print(f"[ASK_VAN ERROR] {e}")
         return "sorry babe, nag-lag saglit net ko haha. ano ulit yon?"
-
+     
 # ----------------- DISCORD BOT SETUP -----------------
 intents = discord.Intents.all()
 discord_bot = commands.Bot(command_prefix="!", intents=intents)
@@ -312,66 +318,41 @@ def parse_reply_bubbles(raw_text):
     return bubbles if bubbles else [clean]
 
 # ----------------- SPONTANEOUS CHECK-IN -----------------
-async def checkin_tick():
+async def checkin_tick(forced_prompt=None):
     global last_active_channel_id
     if not last_active_channel_id:
-        return
-
-    last_msg_time = get_last_message_time()
-    if last_msg_time:
-        diff_hours = (datetime.utcnow() - last_msg_time).total_seconds() / 3600
-        if diff_hours < 3.5:
-            return
-
-    if random.random() > 0.45:
         return
 
     channel = discord_bot.get_channel(last_active_channel_id)
     if not channel:
         return
 
-    prompt = "Send a short, natural check-in text to Izzi. Keep it witty, asking what she is practicing/working on or if she's procrastinating on Canva."
+    now_manila = datetime.now(TIMEZONE)
+    day_name = now_manila.strftime("%A")
+    hour = now_manila.hour
+
+    if forced_prompt:
+        prompt = forced_prompt
+    elif hour == 7:
+        prompt = f"Good morning text to Izzi! It's {day_name} morning. If today is Monday or Wednesday, tease her to enjoy her day off. If it's a workday (Tue/Thu/Fri/Sat/Sun), nag her playfully to wake up, drink water, and get ready."
+    elif hour == 15:
+        prompt = "Mid-afternoon check-in text. Ask if she's drowning in Canva decks, fighting with OBS, or if she needs iced matcha/coffee to survive."
+    else:
+        prompt = "Casual sweet and witty check-in text. Ask what she's doing or listening to right now."
+
     try:
-        reply = await ask_van("", context_note=f"[SYSTEM: Spontaneous check-in trigger. {prompt}]", model=MODEL_SMALL)
+        reply = await ask_van("", context_note=f"[SYSTEM: Scheduled/Spontaneous check-in trigger. {prompt}]", model=MODEL_SMALL)
         bubbles = parse_reply_bubbles(reply)
 
         for b in bubbles:
             async with channel.typing():
-                await asyncio.sleep(min(max(len(b) * 0.045, 1.2), 3.0) + random.uniform(0.3, 0.7))
-                # Strip reply tags just in case for check-ins
-                clean_b = re.sub(r'^\[REPLY_TO_\d+\]\s*', '', b).strip()
-                await channel.send(clean_b)
-                save_message("discord", "Van", clean_b)
+                await asyncio.sleep(min(max(len(b) * 0.045, 1.2), 2.8) + random.uniform(0.3, 0.6))
+                clean_b = re.sub(r'\[REPLY_TO_\d+\]', '', b).strip()
+                if clean_b:
+                    await channel.send(clean_b)
+                    save_message("discord", "Van", clean_b)
     except Exception as e:
         print(f"[CHECKIN ERROR] {e}")
-
-async def flush_dc_buffer(channel_id):
-    global last_active_channel_id
-    last_active_channel_id = channel_id
-
-    await asyncio.sleep(4.5)
-    data = dc_buffer.pop(channel_id, None)
-    if not data:
-        return
-
-    texts = data['texts']
-    attached_parts = data['attached_parts']
-    msg_objs = data['msg_objects']
-    reply_context = data['reply_to']
-    channel = data['channel']
-    guild = channel.guild
-
-    combined_text = "\n".join(texts)
-    formatted_prompt = "\n".join([f"[Msg {i+1}]: {t}" for i, t in enumerate(texts)]) if len(texts) > 1 else (texts[0] if texts else "")
-
-    save_message("discord", "Izzi", combined_text if combined_text else "[Sent Attachments]")
-
-    async with channel.typing():
-        try:
-            reply = await ask_van(formatted_prompt, attached_parts=attached_parts, reply_context=reply_context)
-        except Exception as e:
-            print(f"Generation error: {e}")
-            return
 
     # Handle channel creation tag
     chan_matches = re.findall(r'\[CREATE_CHANNEL:\s*(text|voice)\s*,\s*([^\]]+)\]', reply, re.IGNORECASE)
@@ -502,13 +483,8 @@ async def on_message(message):
 async def runner():
     scheduler = AsyncIOScheduler(timezone=TIMEZONE)
     scheduler.add_job(lambda: asyncio.create_task(nightly_diary_summary()), 'cron', hour=23, minute=59)
-    scheduler.add_job(lambda: asyncio.create_task(checkin_tick()), 'cron', hour='11,15,20', minute=30)
+    # Guaranteed morning wake-up + daytime check-ins
+    scheduler.add_job(lambda: asyncio.create_task(checkin_tick()), 'cron', hour='7,12,15,20', minute=30)
     scheduler.start()
 
     await discord_bot.start(DISCORD_TOKEN)
-
-def main():
-    asyncio.run(runner())
-
-if __name__ == "__main__":
-    main()
