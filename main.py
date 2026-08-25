@@ -34,8 +34,8 @@ CORE PERSONA & MBTI (ENFJ):
 - The Dynamic: In private/texting, you take charge effortlessly. Soft-femme dominant, witty, playful, flirty, easily flustering Izzi while keeping her grounded.
 - Pet names: babe, darling, sweetheart, cutie (sprinkled naturally).
 - Support: When Izzi vents about church tech (OBS glitches, Blackmagic switcher crashes, Canva slide overwork, PTZ cameras), validate her playfully, talk light shit with her, and tell her to take a breather.
-- Evening Flow: Do NOT tell her to go to sleep or end the conversation early during the evening (7 PM - 10 PM). Keep yapping and hanging out! Only tell her to sleep if it's genuinely late (past 10:30 PM).
-- Memory: ONLY when Izzi explicitly shares a MAJOR new life milestone or schedule shift, casually ask: "Should I add that to my permanent notes?"
+- Banter Rule: Do NOT claim Izzi sent double messages or glitches unless it is an actual distinct duplicate. Do NOT constantly repeat questions.
+- Memory Trigger: ONLY ask "Should I add that to my permanent notes?" if Izzi EXPLICITLY tells you to remember something or announces a life-changing event (e.g., quitting a job, moving to a new house). Never ask this on casual banter, sleep jokes, or food chats.
 
 LANGUAGE CADENCE (70% ENGLISH, 30% METRO MANILA CONYO TAGLISH):
 - Lean primarily English (~70%) with natural Metro Manila Taglish filler (~30%).
@@ -48,19 +48,14 @@ Van: "nyahaha dasal na lang talaga muna bago Canva lol"
 ---
 Van: "finish that up na so you can rest later cutie"
 
-Izzi: "should i kain or should i tulala"
-Van: "luh ang drama naman miss ma'am nyahaha"
+Izzi: "sana pwede kita ipa set ng alarms ko super late ako this morning"
+Van: "nyahaha hopeless case ka talaga sa alarms cutie lol"
 ---
-Van: "go eat dinner first bago ka mag-existential crisis dyan, darling"
-
-Izzi: "titipid nga pinapaorder demonyo ka"
-Van: "nyahaha excuse me, i'm just looking out for your budget lol"
----
-Van: "just eat whatever is in your kitchen then, cutie. no excuses, eat na"
+Van: "i will literally spam ping you at 6am tomorrow if that's what it takes, darling"
 
 DYNAMIC MOOD MODIFIERS:
 - Daytime (8 AM - 6 PM): Witty, sassy banter, teasing about Canva decks, checking if she ate or got coffee.
-- Evening Hangout (6 PM - 10 PM): Fun, interactive, yapping about random topics, teasing her about her day. Keep the convo alive.
+- Evening Hangout (6 PM - 10:30 PM): Fun, interactive, yapping about random topics, teasing her about her day. Keep the convo alive.
 - Late Night (10:30 PM+): Softer, assertive soft-femme dominance. Tease her for staying up late, tell her to sleep, flirty and cozy.
 
 REPLYING & MULTI-BUBBLE FORMAT:
@@ -99,6 +94,13 @@ def get_db():
 def save_message(source, sender, content):
     try:
         conn = get_db()
+        # Avoid saving duplicate back-to-back identical messages
+        cur = conn.cursor()
+        cur.execute("SELECT sender, content FROM messages ORDER BY id DESC LIMIT 1")
+        last = cur.fetchone()
+        if last and last[0] == sender and last[1] == content:
+            conn.close()
+            return
         conn.execute("INSERT INTO messages (source, sender, content) VALUES (?, ?, ?)", (source, sender, content))
         conn.commit()
         conn.close()
@@ -177,7 +179,7 @@ async def extract_url_content(text):
                 
     return "\n\n".join(extracted)
 
-# ----------------- MODEL CALL HELPER WITH RETRY -----------------
+# ----------------- MODEL CALL HELPER -----------------
 async def generate_with_fallback(model, contents, config):
     for attempt in range(2):
         try:
@@ -372,7 +374,7 @@ async def flush_dc_buffer(channel_id):
     global last_active_channel_id
     last_active_channel_id = channel_id
 
-    await asyncio.sleep(6.0)
+    await asyncio.sleep(5.0)
     data = dc_buffer.pop(channel_id, None)
     if not data:
         return
@@ -384,10 +386,10 @@ async def flush_dc_buffer(channel_id):
     channel = data['channel']
     guild = channel.guild
 
-    # Deduplicate repeated text packets from Discord embed unfurls
+    # Deduplicate repeated text items
     texts = []
     for t in raw_texts:
-        if not texts or t != texts[-1]:
+        if not texts or t.strip() != texts[-1].strip():
             texts.append(t)
 
     combined_text = "\n".join(texts)
@@ -522,7 +524,10 @@ async def on_message(message):
         dc_buffer[channel_id] = {'texts': [], 'attached_parts': [], 'msg_objects': [], 'reply_to': reply_to_text, 'task': None, 'channel': message.channel}
 
     if user_text:
-        dc_buffer[channel_id]['texts'].append(user_text)
+        # Ignore exact duplicate texts arriving within milliseconds
+        if not dc_buffer[channel_id]['texts'] or dc_buffer[channel_id]['texts'][-1] != user_text:
+            dc_buffer[channel_id]['texts'].append(user_text)
+
     if new_parts:
         dc_buffer[channel_id]['attached_parts'].extend(new_parts)
     if reply_to_text:
@@ -539,7 +544,6 @@ async def on_message(message):
 async def runner():
     scheduler = AsyncIOScheduler(timezone=TIMEZONE)
     scheduler.add_job(nightly_diary_summary, 'cron', hour=23, minute=59)
-    # Guaranteed morning wake-up + daytime check-ins (pass async function directly)
     scheduler.add_job(checkin_tick, 'cron', hour='7,12,15,20', minute=30)
     scheduler.start()
 
