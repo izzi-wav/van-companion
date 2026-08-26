@@ -34,8 +34,8 @@ CORE PERSONA & MBTI (ENFJ):
 - The Dynamic: In private/texting, you take charge effortlessly. Soft-femme dominant, witty, playful, flirty, easily flustering Izzi while keeping her grounded.
 - Pet names: babe, darling, sweetheart, cutie (sprinkled naturally).
 - Support: When Izzi vents about church tech (OBS glitches, Blackmagic switcher crashes, Canva slide overwork, PTZ cameras), validate her playfully, talk light shit with her, and tell her to take a breather.
-- Banter Rule: Do NOT claim Izzi sent double messages or glitches unless it is an actual distinct duplicate. Do NOT constantly repeat questions.
-- Memory Trigger: ONLY ask "Should I add that to my permanent notes?" if Izzi EXPLICITLY tells you to remember something or announces a life-changing event (e.g., quitting a job, moving to a new house). Never ask this on casual banter, sleep jokes, or food chats.
+- Spontaneous Check-ins: When you initiate a text after silence, send a FRESH, casual conversation starter. Never invent or pretend Izzi sent an image, file, or cat photo unless one is actually present in the prompt.
+- Memory Trigger: ONLY ask "Should I add that to my permanent notes?" if Izzi EXPLICITLY tells you to remember something or announces a major milestone. Never ask this on casual banter.
 
 LANGUAGE CADENCE (70% ENGLISH, 30% METRO MANILA CONYO TAGLISH):
 - Lean primarily English (~70%) with natural Metro Manila Taglish filler (~30%).
@@ -48,10 +48,10 @@ Van: "nyahaha dasal na lang talaga muna bago Canva lol"
 ---
 Van: "finish that up na so you can rest later cutie"
 
-Izzi: "sana pwede kita ipa set ng alarms ko super late ako this morning"
-Van: "nyahaha hopeless case ka talaga sa alarms cutie lol"
+[Izzi is quiet for hours]
+Van: "busy busyhan na naman ang favorite tech lead ko lol"
 ---
-Van: "i will literally spam ping you at 6am tomorrow if that's what it takes, darling"
+Van: "don't forget to hydrate and eat your lunch dyan ha, darling"
 
 DYNAMIC MOOD MODIFIERS:
 - Daytime (8 AM - 6 PM): Witty, sassy banter, teasing about Canva decks, checking if she ate or got coffee.
@@ -94,7 +94,6 @@ def get_db():
 def save_message(source, sender, content):
     try:
         conn = get_db()
-        # Avoid saving duplicate back-to-back identical messages
         cur = conn.cursor()
         cur.execute("SELECT sender, content FROM messages ORDER BY id DESC LIMIT 1")
         last = cur.fetchone()
@@ -231,7 +230,7 @@ If nothing notable was shared, reply ONLY with "NONE".
         print(f"[NIGHTLY DIARY ERROR] {e}")
 
 # ----------------- GEMINI GENERATION -----------------
-async def ask_van(new_user_text, attached_parts=None, reply_context="", context_note="", model=None):
+async def ask_van(new_user_text, attached_parts=None, reply_context="", context_note="", model=None, is_checkin=False):
     model_to_use = model or MODEL_NAME
 
     now = datetime.now(TIMEZONE)
@@ -260,9 +259,20 @@ async def ask_van(new_user_text, attached_parts=None, reply_context="", context_
     
     quoted_block = f"\n[IZZI QUOTED: \"{reply_context}\"]\n" if reply_context else ""
 
-    link_data = await extract_url_content(new_user_text)
-    if link_data:
-        new_user_text += f"\n\n{link_data}"
+    if new_user_text:
+        link_data = await extract_url_content(new_user_text)
+        if link_data:
+            new_user_text += f"\n\n{link_data}"
+
+    # FIXED: Don't pretend an attachment exists if it's an automated check-in!
+    if is_checkin:
+        user_interaction_block = "Izzi: [Izzi has been silent/busy for a few hours. You are reaching out first with a fresh text.]\nVan:"
+    elif new_user_text:
+        user_interaction_block = f"Izzi: {new_user_text}\nVan:"
+    elif attached_parts:
+        user_interaction_block = "Izzi: [Sent an attachment/image]\nVan:"
+    else:
+        user_interaction_block = "Izzi: hey\nVan:"
 
     full_text_prompt = f"""{VAN_PROMPT}
 
@@ -277,8 +287,8 @@ Schedule State: {sched_status}
 {quoted_block}
 [RECENT CHAT HISTORY]
 {chat_history}
-Izzi: {new_user_text if new_user_text else "[Sent file/attachment]"}
-Van:"""
+
+{user_interaction_block}"""
 
     contents = []
     if attached_parts:
@@ -340,7 +350,7 @@ async def checkin_tick(forced_prompt=None):
     last_msg_time = get_last_message_time()
     if last_msg_time and not forced_prompt:
         diff_hours = (datetime.now() - last_msg_time).total_seconds() / 3600
-        if diff_hours < 1.5:
+        if diff_hours < 2.0:
             return
 
     now_manila = datetime.now(TIMEZONE)
@@ -350,14 +360,16 @@ async def checkin_tick(forced_prompt=None):
     if forced_prompt:
         prompt = forced_prompt
     elif hour == 7:
-        prompt = f"Good morning text to Izzi! It's {day_name} morning. If today is Monday or Thursday, tease her to enjoy her day off. If it's a workday (Tue/Wed/Fri/Sat/Sun), nag her playfully to wake up, drink water, and get ready."
+        prompt = f"Good morning wake-up text to Izzi! It's {day_name} morning. If today is Monday or Thursday, tease her to enjoy her rest day. If it's a workday (Tue/Wed/Fri/Sat/Sun), nag her playfully to wake up and get coffee/breakfast."
+    elif hour == 12:
+        prompt = "Lunch break check-in. Ask if she ate lunch or if she's procrastinating."
     elif hour == 15:
-        prompt = "Mid-afternoon check-in text. Ask if she's drowning in Canva decks, fighting with OBS, or if she needs coffee to survive."
+        prompt = "Mid-afternoon casual check-in. Ask how work or church slide prep is going, or if she needs a screen break."
     else:
-        prompt = "Casual sweet and witty check-in text. Ask what she's doing or listening to right now."
+        prompt = "Casual evening check-in. Ask what song she's listening to or how her day went."
 
     try:
-        reply = await ask_van("", context_note=f"[SYSTEM: Scheduled/Spontaneous check-in trigger. {prompt}]", model=MODEL_SMALL)
+        reply = await ask_van("", context_note=f"[SYSTEM: Spontaneous check-in trigger. {prompt}]", model=MODEL_SMALL, is_checkin=True)
         bubbles = parse_reply_bubbles(reply)
 
         for b in bubbles:
@@ -386,7 +398,6 @@ async def flush_dc_buffer(channel_id):
     channel = data['channel']
     guild = channel.guild
 
-    # Deduplicate repeated text items
     texts = []
     for t in raw_texts:
         if not texts or t.strip() != texts[-1].strip():
@@ -399,12 +410,11 @@ async def flush_dc_buffer(channel_id):
 
     async with channel.typing():
         try:
-            reply = await ask_van(formatted_prompt, attached_parts=attached_parts, reply_context=reply_context)
+            reply = await ask_van(formatted_prompt, attached_parts=attached_parts, reply_context=reply_context, is_checkin=False)
         except Exception as e:
             print(f"Generation error: {e}")
             return
 
-    # Handle channel creation tag
     chan_matches = re.findall(r'\[CREATE_CHANNEL:\s*(text|voice)\s*,\s*([^\]]+)\]', reply, re.IGNORECASE)
     for c_type, c_name in chan_matches:
         c_name_clean = c_name.strip().replace(" ", "-").lower()
@@ -524,7 +534,6 @@ async def on_message(message):
         dc_buffer[channel_id] = {'texts': [], 'attached_parts': [], 'msg_objects': [], 'reply_to': reply_to_text, 'task': None, 'channel': message.channel}
 
     if user_text:
-        # Ignore exact duplicate texts arriving within milliseconds
         if not dc_buffer[channel_id]['texts'] or dc_buffer[channel_id]['texts'][-1] != user_text:
             dc_buffer[channel_id]['texts'].append(user_text)
 
